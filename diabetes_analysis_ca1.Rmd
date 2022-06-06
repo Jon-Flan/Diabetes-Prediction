@@ -1,0 +1,4142 @@
+---
+title: "Diabetes Analysis"
+author: "Jonathan Flanagan (x18143890) & Neil Fitzgerald (x18149693)"
+output: pdf_document
+---
+
+\small
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(fig.width=5, fig.height=3, fig.align="center")
+tinytex::install_tinytex()
+
+#install.packages('reticulate')
+library('reticulate')
+library('Amelia')
+library('ggplot2')
+library('nortest')
+library('corrplot')
+library('ggcorrplot')
+library('dplyr')
+library('MASS')
+library('InformationValue')
+library('caret')
+library('randomForest')
+library('e1071')
+library('rpart.plot')
+library('ROCR')
+library('pROC')
+
+# these need to be changed to the users local machine variables
+use_python("C:/Users/Jonathan/anaconda3/python.exe")
+use_condaenv("C:/Users/Jonathan/anaconda3")
+
+# an Rprofile file needs to be made in notepad and saved to the documents folder as .Rprofile
+# with the following line in it
+
+# Sys.setenv(RETICULATE_PYTHON = "C:/Users/Jonathan/anaconda3/python.exe") where the path is the users python install
+
+```
+
+# Introduction
+
+The purpose of this analysis is to see if certain health indicators can be used to predict the presence of diabetes in a person. Diabetes is categorized as serious chronic disease where individuals lose the ability to effectively regulate glucose levels in their blood, a result of this can be a reduced quality of life and/or life expectancy. 
+
+During the normal digestion process, foods are broken down into sugars and are released into the bloodstream. This in-turn, signals the pancreas to release insulin. Insulin helps cells within the body by enabling the use of sugars in the bloodstream as a form of energy. Diabetes is generally characterized by either the body not making enough insulin or not being able to use the insulin that is made effectively. Typically labeled Type 1 or Type 2 diabetes.
+
+Health risks such as heart disease, vision loss, lower-limb amputation, and kidney disease are typically associated with sufferers of chronic diabetes. While there is no cure for diabetes, strategies like losing weight, eating healthily, being active, and receiving medical treatments can mitigate the harms of this disease in many patients. 
+
+Early diagnosis can lead to lifestyle changes and a more effective treatment. By making predictive models for diabetes risk, it can become one of many important tools for health officials.
+
+# Data
+
+The data set for this analysis was downloaded from Kaggle [link](https://www.kaggle.com/datasets/alexteboul/diabetes-health-indicators-dataset) details about how this data set was originally collected are below:
+
+_"The Behavioral Risk Factor Surveillance System (BRFSS) is a health-related telephone survey that is collected annually by the CDC. Each year, the survey collects responses from over 400,000 Americans on health-related risk behaviors, chronic health conditions, and the use of preventative services. It has been conducted every year since 1984."_
+
+Also included is the _CDC Behavioral Risk Factor Surveillance System Codebook_ which contains the column codes, questions asked and the possible responses.
+
+The downloaded dataset has a 50/50 split of 70,692 diabetic and non-diabetic patients. Where diabetic is classified as being either type 1 or type 2 diabetic or being in a pre-diabetic condition, the the purposes of this analysis these three case types are labeled as diabetic. 
+
+A subset of 22 of the original 330 questions asked are used in this dataset and any answers where the respondent gave the answer _"Don't know"_ or _"Refused to answer"_ are removed. 
+
+\newpage
+
+# Import Data & Initial Exploration
+
+The data is imported from the downloaded csv. The columns are inspected, a basic summary is created for each column and the data types are viewed to see the initial shape and feature set of the data. A check for any missing values is also performed. 
+
+```{r}
+#----------------- IMPORT THE DATA FOR ANALYSIS
+
+get_data <- function(){
+  # import data
+  data <- read.csv("./data/diabetes_binary_health_indicators.csv")
+  # convert to dataframe
+  data <- as.data.frame(data)
+  
+  return (data)
+}
+
+data <- get_data()
+
+# print the number of rows and cols
+dim(data)
+
+```
+The data set contains 70,692 rows (observations) from the CDC survey and 22 features. As this analysis will look at predicting the possibility of a diagnosis of diabetes, the __diabetes_binary__ column will be a our dependent variable.
+
+The first 5 rows of the data are viewed to get an idea of what is contained in the data set.
+
+```{r R.options = list(width = 50)}
+
+options(width = 100)
+
+# print out first 6 rows and first 7 columns to fit on pdf output
+head(data)
+
+```
+
+All of the values appear to be numeric or numeric factors. This will be inspected further on for full clarifications. 
+A summary of all the columns is then checked.
+
+```{r}
+options(width = 100)
+
+# summmary of all rows
+summary(data)
+
+```
+The summary shows very little initial information as most of the rows that should be factors are being read as numeric only.
+\newpage
+We can view the data types to confirm this.
+
+```{r}
+
+# view the data types
+str(data)
+
+```
+A view of the data types for each column confirms that they have all been read in as numeric. A copy of the questionnaire and the meaning of each factor level has also been downloaded to check which question in the questionnaire each column header refers to and the possible answers that could have been given.
+
+Note: __any answers which returned no information such as "don't know" or "prefer not to answer" were already removed to the data set prior to downloading__
+
+Next we can perform a boolean check to see if any columns contain NA values
+
+```{r}
+
+# Check na's for each column
+na_check <- mapply(anyNA, data)
+na_check
+
+```
+\newpage
+The data can also be visually inspect using a data map for NaN's.
+
+```{r}
+
+# visualize the missing data
+missmap(data, main = "Missing values vs observed")
+
+```
+\newpage
+
+# Data Types & Imputation
+
+There are no signs of any missing data in any of the columns, but from exploring the data types and the data summary we can see some features that should be factors are imported as numbers. 
+
+The original survey conducted by the CDC has string value factors that are easier to read so we will change the factors back to their original string value for the time being to make a more human readable data set during the initial exploration. 
+
+### Table of the Data Features, the original survey question and the data type. 
+
+Data Features    | Survey Question    | Data Type
+-----------------|--------------------|-------------------------------------------------------------
+Diabetes_binary  | (Ever told) you have diabetes, Predictor Variable | BOOLEAN - (TRUE/FALSE)
+-----------------|--------------------|-------------------------------------------------------------
+HighBP           | Adults who have been told they have high blood pressure by a doctor, nurse, or other health professional | BOOLEAN (TRUE/FALSE) 
+-----------------|--------------------|-------------------------------------------------------------
+HighChol | Have you EVER been told by a doctor, nurse or other health professional that your blood cholesterol is high | BOOLEAN (TRUE/FALSE)  
+-----------------|--------------------|-------------------------------------------------------------
+CholCheck | Cholesterol check within past five years | BOOLEAN (TRUE/FALSE)  
+-----------------|--------------------|-------------------------------------------------------------
+BMI | Body Mass Index (BMI) | INT
+-----------------|--------------------|-------------------------------------------------------------
+Smoker | Have you smoked at least 100 cigarettes in your entire life? | FACTOR (Yes/No)
+-----------------|--------------------|-------------------------------------------------------------
+Stroke | (Ever told) you had a stroke | Factor (Yes/No)    
+-----------------|--------------------|-------------------------------------------------------------
+HeartDiseaseorAttack | Have ever reported having coronary heart disease (CHD) or myocardial infarction (MI) | FACTOR (Yes/No)
+-----------------|--------------------|-------------------------------------------------------------
+PhysActivity | Adults who reported doing physical activity or exercise during the past 30 days other than their regular job | BOOLEAN (TRUE/FALSE)  
+-----------------|--------------------|-------------------------------------------------------------
+Fruits | Consume Fruit 1 or more times per day | BOOLEAN (TRUE/FALSE) 
+-----------------|--------------------|-------------------------------------------------------------
+Veggies | Consume Vegetables 1 or more times per day | BOOLEAN (TRUE/FALSE)   
+-----------------|--------------------|-------------------------------------------------------------
+HvyAlcoholConsump | Heavy drinkers (adult men having more than 14 drinks per week and adult women having more than 7 drinks per week) | BOOLEAN (TRUE/FALSE)
+-----------------|--------------------|-------------------------------------------------------------
+AnyHealthcare | Do you have any kind of health care coverage | FACTOR (Yes/No)   
+-----------------|--------------------|-------------------------------------------------------------
+NoDocbcCost  | Was there a time in the past 12 months when you needed to see a doctor but could not because of cost? | FACTOR (Yes/No)  
+-----------------|--------------------|-------------------------------------------------------------
+GenHlth | Would you say that in general your health is: | FACTOR (1:Excellent, 2:Very Good, 3:Good, 4:Fair, 5:Poor) 
+-----------------|--------------------|-------------------------------------------------------------
+MentHlth | For how many days during the past 30 days was your mental health not good? | INT (0-30) 
+-----------------|--------------------|-------------------------------------------------------------
+PhysHlth | for how many days during the past 30 days was your physical health not good? | INT (0-30)   
+-----------------|--------------------|-------------------------------------------------------------
+DiffWalk | Do you have serious difficulty walking or climbing stairs? | FACTOR (Yes/No) 
+-----------------|--------------------|-------------------------------------------------------------
+Sex | Indicate sex of respondent | FACTOR (1:Male, 2:Female )    
+-----------------|--------------------|-------------------------------------------------------------
+Age | Fourteen-level age category | FACTOR (1:Age 18 to 24,2:Age 25 to 29,3:Age 30 to 34,4:Age 35 to 39,5:Age 40 to 44,6:Age 45 to 49,7:Age 50 to 54,8:Age 55 to 59,9:Age 60 to 64,10:Age 65 to 69,11:Age 70 to 74,12:Age 75 to 79,13:Age 80 or older) 
+-----------------|--------------------|-------------------------------------------------------------
+Education | What is the highest grade or year of school you completed? | FACTOR(1:Never attended school or only kindergarten,2:Grades 1 through 8 (Elementary),3:Grades 9 through 11 (Some high school),4:Grade 12 or GED (High school graduate),5:College 1 year to 3 years (Some college or technical school),6:College 4 years or more (College graduate)) 
+-----------------|--------------------|-------------------------------------------------------------
+Income | What is your annual household income from all sources: | FACTOR (1: Less than $10,000,2: Less than $15,000 ($10,000 to less than $15,000),3: Less than $20,000 ($15,000 to less than $20,000),4: Less than $25,000 ($20,000 to less than $25,000),5: Less than $35,000 ($25,000 to less than $35,000),6: Less than $50,000 ($35,000 to less than $50,000),7: Less than $75,000 ($50,000 to less than $75,000),8: $75,000 or more)
+
+## Changing data back to original state
+
+A function is created called remap_features that contains all the mappings in python dictionaries that are to be applied to certain types of columns. The function takes in the data frame, the column name and an option from 1 to 7 depending on which dictionary is to be used.
+
+__Note__: _Python is used in following two code chunks as the operation was easier to apply for the team members who are more familiar with Python than R_
+
+For future reference a "Code:" tag will be added before each chunk to identify which language is used in the code chunk
+
+__Code__: _Python_
+```{python}
+# import libraries needed
+import pandas as pd
+
+#create a python data frame of the imported data
+df = pd.DataFrame(r.data)
+
+# function to remap the Boolean and yes/no columns
+def remap_feature(df, col, y):
+  
+  # dictionaries for Boolean or Yes/No factors
+  bool_dict = {1: True, 0: False}
+  factor_dict = {1: "Yes", 0: "No"}
+  
+  # dictionary for general health column
+  GenHlth_dict = {1:'Excellent', 2:'Very Good', 3:'Good', 4:'Fair', 5:'Poor'}
+  
+  # dictionary for male and female factors
+  Sex_dict = {1:'Male', 0:'Female'}
+  
+  # dictionary for level of educations
+  edu_dict = {1:'Only kindergarten',
+              2:'Grades 1 - 8',
+              3:'Grades 9 - 11',
+              4:'Grade 12 or GED',
+              5:'College 1 - 3 years',
+              6:'College 4 years or more'}
+              
+  # dictionary for level of household income
+  income_dict = {1: '< $10k',
+                 2: '> $10k, < $15k',
+                 3: '> $15k, < $20k',
+                 4: '> $20k, < $25k',
+                 5: '> $25k, < $35k',
+                 6: '> $35k, < $50k',
+                 7: '> $50k, < $75k',
+                 8: '> $75k'}
+  
+  age_dict = {1:'18 to 24',
+              2:'25 to 29',
+              3:'30 to 34',
+              4:'35 to 39',
+              5:'40 to 44',
+              6:'45 to 49',
+              7:'50 to 54',
+              8:'55 to 59',
+              9:'60 to 64',
+              10:'65 to 69',
+              11:'70 to 74',
+              12:'75 to 79',
+              13:'80 or older'}
+  
+  if(y == 1):
+    df[col] = df[col].map(bool_dict)
+  elif(y == 2):
+    df[col] = df[col].map(factor_dict)
+  elif(y == 3):
+    df[col] = df[col].map(GenHlth_dict)
+  elif(y == 4):
+    df[col] = df[col].map(Sex_dict)
+  elif(y == 5):
+    df[col] = df[col].map(edu_dict)
+  elif(y == 6):
+    df[col] = df[col].map(income_dict)
+  elif(y == 7):
+    df[col] = df[col].map(age_dict)
+  else:
+    df[col] = df[col]
+    
+  return df[col]
+```
+
+The mappings are then applied, returning the adjusted data in the columns and the first few rows of the new mappings are viewed to see the changes made.
+
+
+_Code_: _Python_
+```{python}
+
+#------- convert columns back to how they where answered in the survey  
+
+# Boolean features
+df['HighBP'] = remap_feature(df,'HighBP',1 )
+df['HighChol'] = remap_feature(df,'HighChol',1 )
+df['CholCheck'] = remap_feature(df,'CholCheck',1 )
+df['PhysActivity'] = remap_feature(df,'PhysActivity',1 )
+df['Fruits'] = remap_feature(df,'Fruits',1 )
+df['Veggies'] = remap_feature(df,'Veggies',1 )
+df['HvyAlcoholConsump'] = remap_feature(df,'HvyAlcoholConsump',1 )
+
+# Yes/No Factor Features
+df['Smoker'] = remap_feature(df,'Smoker',2 )
+df['Stroke'] = remap_feature(df,'Stroke',2 )
+df['HeartDiseaseorAttack'] = remap_feature(df,'HeartDiseaseorAttack',2 )
+df['AnyHealthcare'] = remap_feature(df,'AnyHealthcare',2 )
+df['NoDocbcCost'] = remap_feature(df,'NoDocbcCost',2 )
+df['DiffWalk'] = remap_feature(df,'DiffWalk',2 )
+
+# General Health Feature
+df['GenHlth'] = remap_feature(df,'GenHlth',3 )
+
+# sex feature
+df['Sex'] = remap_feature(df,'Sex', 4)
+
+# education level feature
+df['Education']= remap_feature(df, 'Education', 5)
+
+# level of income feature
+df['Income'] = remap_feature(df, 'Income', 6)
+
+# Level change for Age
+df['Age'] = remap_feature(df, 'Age', 7)
+
+print(df.iloc[:,0:20])
+
+```
+
+Now that the survey data has been reversed to its original text state it can be loaded back into a new R data frame for inspection.
+
+\newpage
+
+## Data types
+
+The data types are inspected and changed as needed to either factor, logical or numeric.
+
+__Code__: _R_
+```{r}
+# converting pandas dataframe back to R dataframe
+data.new <-  py$df
+
+# view first 5 rows to double check the data conversion
+head(data.new)
+
+```
+
+With the data now in its text translation for the factors we can recheck the data types and adjust what is needed before we explore the data set for any readily available insights.
+
+__Code__: _R_
+```{r}
+# view data types
+str(data.new)
+
+```
+
+Some of the columns have been recognized correctly as logical values and numbers but the character columns will need to be converted to factors
+
+__Code__: _R_
+```{r}
+# converting character columns to factors
+factor_cols <- c('Diabetes_binary','Smoker', 'Stroke', 'HeartDiseaseorAttack', 'AnyHealthcare', 
+                 'NoDocbcCost', 'GenHlth', 'DiffWalk', 'Sex', 'Age', 'Education', 'Income')
+
+data.new[factor_cols] <- lapply(data.new[factor_cols], factor)
+
+# view the new data types
+str(data.new)
+
+```
+\newpage
+All columns have now been changed to the correct data type. 
+We can review the data summary to get a better idea of what is present in the data set
+
+__Code__: _R_
+```{r}
+
+# view data summary
+summary(data.new)
+
+```
+\newpage
+With the data set initially cleaned and ready to explore we can make a new data frame for the ready to use data set.
+
+__Code__: _R_
+```{r}
+# new cleaned data set
+data.clean <- data.new
+
+# view the first 5 rows
+head(data.clean)
+
+```
+
+\newpage
+# Dataset Exploration
+
+First the numeric values will be explored, the numeric values in the data are represented by either days for __MentHlth__ or __PhysHlth__ and an integer range for __BMI__. 
+
+The first two may be turned into factors but the features can be explored in their numeric representation first. As turning them into factors would lead to having two features with 30 levels of factors.
+
+## BMI
+
+Exploring the BMI feature and its individual relationship to the diabetes diagnosis. BMI stands for Body Mass Index and is a measure that uses your height and weight to work out if your weight is healthy.
+
+The BMI calculation divides an adult's weight in kilograms by their height in meters squared. For most adults, an ideal BMI is in the 18.5 to 24.9 range.
+
+### Distributions
+&nbsp;
+First the distribution characteristics of the BMI feature will be explored, then the distributions of the BMI between the Diabetic and Non-Diabetic groups.
+
+__Code__: _R_
+```{r}
+# histogram distribution
+ggplot(data.clean, aes(x = BMI)) + 
+  geom_histogram(fill='royalblue1', alpha = 0.75, bins=30)+
+  ggtitle("BMI Distribution")
+ggsave(path='./graphs',filename = '1_bmi_dist.png', dpi = 300)
+```
+The BMI doesn't appear to be normally distributed, it appears heavily skewed to the left with a long right tail.
+We can use a box plot to visualize the quartile ranges as well as see outliers in the data.
+\newpage
+__Code__: _R_
+```{r}
+# box plot of BMI range
+ggplot(data.clean, aes(y = BMI)) + 
+  stat_boxplot(geom = "errorbar",
+               width = 0.15,
+               color = 1) +  # Error bar color
+  geom_boxplot(fill = 'darkorange1',           # Box color
+               alpha = 0.5,        # Transparency
+               color = 1,          # Border color
+               outlier.colour = 2)+
+  ggtitle("BMI Boxplot")
+ggsave(path='./graphs',filename = '2_bmi_box.png', dpi = 300)
+```
+The box plot similarly shows there is a long string of outliers outside the 3rd quartile range. As Diabetes is the predictor in this analysis the same distributions can be grouped by their diabetic diagnosis to see if there are any initial differences between the two groups in BMI range.
+\newpage
+__Code__: _R_
+```{r}
+# grouped histogram of BMI by diabetic diagnosis
+ggplot(data.clean, aes(x = BMI, fill = Diabetes_binary)) + 
+  geom_histogram(alpha = 0.5, position = "identity", bins=30)+
+  scale_fill_manual(values = c("royalblue1", "darkorange1"))+
+  ggtitle("Distribution of BMI (Diabetic / Non-Diabetic)")
+ggsave(path='./graphs',filename = '3_bmi_both_dist.png', dpi = 300)
+```
+From the histogram distribution it does appear that there is a shift int BMI towards the right tail with respect to people with a diabetic condition.
+\newpage
+A box plot of the groups can show if there is any visual differences in the distribution around the means.
+
+__Code__: _R_
+```{r}
+ggplot(data.clean, aes(x = Diabetes_binary, y = BMI, fill = Diabetes_binary)) + 
+  stat_boxplot(geom = "errorbar",
+               width = 0.25) + 
+  geom_boxplot(alpha = 0.5)+
+  scale_fill_manual(values = c("royalblue1", "darkorange1"))+
+  ggtitle("BMI (Diabetic / Non-Diabetic)")
+ggsave(path='./graphs',filename = '4_bmi_both_box.png', dpi = 300)
+```
+The box plot of the two groups (Diabetic / Non-Diabetic) indicates that there is a difference in the means between the two groups and there are a significant amount of values outside the 3rd quartile for each group.
+
+### Normality testing  
+
+Normality can be tested across the entire BMI feature as well as across the two Diabetic diagnosis groups.
+QQ plots will be used for visualizing the normality as well as normality testing where an alpha value of 0.05 is used to determine the distribution normality.
+
+__Code__: _R_
+```{r warning=FALSE}
+
+#perform kolmogorov-smirnov test
+ks.test(data.clean$BMI, 'pnorm')
+
+```
+A Kolmogorov-Smirnov normality test on the BMI feature indicates that the data isn't normally distributed with a p-value of significantly less than the alpha value of 0.05.
+\newpage
+__Code__: _R_
+```{r}
+#perform shapiro-wilk test
+lillie.test(data.clean$BMI)
+```
+
+A second Kolmogorov-Smirnov normality test using the Lillie Fors correction on the BMI feature indicates that the data isn't normally distributed with a p-value of significantly less than the alpha value of 0.05.
+
+__Code__: _R_
+```{r fig.width=5, fig.height=3}
+# qq plot of BMI distribution
+qplot(sample = BMI, data = data.clean)+
+labs(title="Q-Q BMI Ratings",
+       y = "Sample Quantile")+ 
+  stat_qq() + 
+  stat_qq_line(colour = "red")
+ggsave(path='./graphs',filename = '5_bmi_qq.png', dpi = 300)
+```
+Visually inspecting on the QQ plot also provides enough evidence that the BMI feature is not normally distributed and that parametric statistical tests would not be suitable on this data.
+\newpage
+
+__Code__: _R_
+```{r warning=FALSE}
+
+#perform kolmogorov-smirnov test
+ks.test(data.clean$BMI[data.clean$Diabetes_binary == 1], 'pnorm')
+
+```
+A Kolmogorov-Smirnov normality test on the BMI feature when separated as only Diabetic diagnosed indicates that the data isn't normally distributed with a p-value of significantly less than the alpha value of 0.05.
+
+__Code__: _R_
+```{r}
+#perform shapiro-wilk test
+lillie.test(data.clean$BMI[data.clean$Diabetes_binary == 1])
+```
+A second Kolmogorov-Smirnov normality test using the Lillie Fors correction on the BMI feature when separated as only Diabetic diagnosed indicates that the data isn't normally distributed with a p-value of significantly less than the alpha value of 0.05.
+
+__Code__: _R_
+```{r fig.width=5, fig.height=3}
+
+# qq plot of BMI distribution for Diabetic diagnosis
+qplot(sample = BMI, data = data.clean[data.clean$Diabetes_binary == 1,])+
+labs(title="Q-Q BMI / Diabetic Ratings",
+       y = "Sample Quantile")+ 
+  stat_qq() + 
+  stat_qq_line(colour = "orange")
+ggsave(path='./graphs',filename = '6_bmi_dia_qq.png', dpi = 300)
+```
+Visually inspecting on the QQ plot also provides enough evidence that the BMI feature when separated as only Diabetic diagnosed is not normally distributed and that parametric statistical tests would not be suitable on this data.
+
+__Code__: _R_
+```{r warning=FALSE}
+
+#perform kolmogorov-smirnov test
+ks.test(data.clean$BMI[data.clean$Diabetes_binary == 0], 'pnorm')
+
+```
+A Kolmogorov-Smirnov normality test on the BMI feature when separated as not Diabetic diagnosed indicates that the data isn't normally distributed with a p-value of significantly less than the alpha value of 0.05.
+
+__Code__: _R_
+```{r}
+#perform shapiro-wilk test
+lillie.test(data.clean$BMI[data.clean$Diabetes_binary == 0])
+```
+A second Kolmogorov-Smirnov normality test using the Lillie Fors correction on the BMI feature when separated as not Diabetic diagnosed indicates that the data isn't normally distributed with a p-value of significantly less than the alpha value of 0.05.
+\newpage
+
+__Code__: _R_
+```{r}
+# qq plot of BMI distribution for Non-Diabetic diagnosis
+qplot(sample = BMI, data = data.clean[data.clean$Diabetes_binary == 0,])+
+labs(title="Q-Q BMI / Non-Diabetic Ratings",
+       y = "Sample Quantile")+ 
+  stat_qq() + 
+  stat_qq_line(colour = "blue")
+ggsave(path='./graphs',filename = '7_bmi_non_dia_qq.png', dpi = 300)
+```
+Visually inspecting on the QQ plot also provides enough evidence that the BMI feature when separated as not Diabetic diagnosed is not normally distributed and that parametric statistical tests would not be suitable on this data.
+
+Manual testing of the central tendencies can also be checked to confirm all the previous findings about the BMI feature and also to check the standard deviation and variations
+
+__Code__: _R_
+```{r}
+
+m <- mean(data.clean$BMI)
+md <- median(data.clean$BMI)
+s <- sd(data.clean$BMI)
+v <- var(data.clean$BMI)
+
+sprintf("Mean: %f Median: %f SD: %f Var: %f ",m,md,s, v)
+
+```
+
+Although the data is not normally distributed the mean and median values are close, with the standard deviation of 7.11 and a variance of 50.61
+\newpage
+
+## MentHlth
+
+Exploring the MentHlth feature and its individual relationship to the diabetes diagnosis. In the CDC survey the values in the data represent how many days during the past 30 days was the persons mental health not good.
+
+### Distributions
+&nbsp;
+First the distribution characteristics of the MentHlth feature will be explored, then the distributions of the MentHlth between the Diabetic and Non-Diabetic groups.
+
+__Code__: _R_
+```{r}
+# histogram distribution
+ggplot(data.clean, aes(x = MentHlth)) + 
+  geom_histogram(fill='royalblue1', alpha = 0.75, bins=30)+
+  ggtitle("MentHlth Distribution")
+ggsave(path='./graphs',filename = '8_menthlth_dist.png', dpi = 300)
+```
+The MentHlth distribution is not normally distributed and is heavily present in the zero to 5 day range. This data may be better represented as a factor in this data but it can still be investigated as a numeric value for exploration purposes.
+\newpage
+
+A box plot can be used to visually check the spread of data through the quartile ranges.
+
+__Code__: _R_
+```{r}
+# box plot of BMI range
+ggplot(data.clean, aes(y = MentHlth)) + 
+  stat_boxplot(geom = "errorbar",
+               width = 0.15,
+               color = 1) +  # Error bar color
+  geom_boxplot(fill = 'darkorange1',           # Box color
+               alpha = 0.5,        # Transparency
+               color = 1,          # Border color
+               outlier.colour = 2)+
+  ggtitle("MentHlth Boxplot")
+ggsave(path='./graphs',filename = '9_menthlth_box.png', dpi = 300)
+
+```
+The box plot similarly shows there is a long string of outliers outside the 3rd quartile range and the data is heavily weighted in the 0 to 5 day range with significant outliers. 
+\newpage
+
+Diabetes being the predictor in the analysis the same distributions will be grouped by their diabetic diagnosis to see if there are other initial differences between the two groups in MentHlth days.
+
+__Code__: _R_
+```{r}
+# grouped histogram of BMI by diabetic diagnosis
+ggplot(data.clean, aes(x = MentHlth, fill = Diabetes_binary)) + 
+  geom_histogram(alpha = 0.5, position = "identity", bins=30)+
+  scale_fill_manual(values = c("royalblue1", "darkorange1"))+
+  ggtitle("Distribution of MentHlth (Diabetic / Non-Diabetic)")
+ggsave(path='./graphs',filename = '10_menthlth_both_dist.png', dpi = 300)
+```
+The grouped distributions show very little differences in the distributions, also gives more credence to use of this feature as factor in later tests.
+\newpage
+
+__Code__: _R_
+```{r}
+ggplot(data.clean, aes(x = Diabetes_binary, y = MentHlth, fill = Diabetes_binary)) + 
+  stat_boxplot(geom = "errorbar",
+               width = 0.25) + 
+  geom_boxplot(alpha = 0.5)+
+  scale_fill_manual(values = c("royalblue1", "darkorange1"))+
+  ggtitle("MentHlth (Diabetic / Non-Diabetic)")
+ggsave(path='./graphs',filename = '11_menthlth_both_box.png', dpi = 300)
+```
+Box plots of the MentHlth feature again show that the data is heavy weighted in the 0 to 5 day range with a uniform spread of outliers, the grouped box plots show that the range for diabetic diagnosis shows a wider variance in the inter quartile range but with a similar mean. 
+
+\newpage
+
+### Normality testing  
+
+&nbsp;
+
+Normality will be tested for the MentHlth feature as a whole as well as divided into the two Diabetic diagnosis groups.
+
+QQ plots will be used for visualizing the normality as well as normality testing where an alpha value of 0.05 is used to determine the distribution normality.
+
+__Code__: _R_
+```{r warning=FALSE}
+
+#perform kolmogorov-smirnov test
+ks.test(data.clean$MentHlth, 'pnorm')
+
+```
+The Kolmogorov-Smirnov normality test on the MentHlth feature indicates that the data isn't normally distributed with a p-value of significantly less than the alpha value of 0.05.
+
+
+__Code__: _R_
+```{r}
+#perform shapiro-wilk test
+lillie.test(data.clean$MentHlth)
+```
+Also the Kolmogorov-Smirnov normality test using the Lillie Fors correction on the MentHlth feature indicates that the data isn't normally distributed with a p-value of significantly less than the alpha value of 0.05.
+
+__Code__: _R_
+```{r}
+# qq plot of BMI distribution
+qplot(sample = MentHlth, data = data.clean)+
+labs(title="Q-Q MentHlth Ratings",
+       y = "Sample Quantile")+ 
+  stat_qq() + 
+  stat_qq_line(colour = "red")
+ggsave(path='./graphs',filename = '12_mentlhlth_qq.png', dpi = 300)
+
+```
+Looking at the qq plot, the distortion of the MentHlth can be seen, the data is not normally distributed. Again this data feature could be retested as a categorical variable instead of numeric. 
+
+__Code__: _R_
+```{r warning=FALSE}
+
+#perform kolmogorov-smirnov test
+ks.test(data.clean$MentHlth[data.clean$Diabetes_binary == 1], 'pnorm')
+
+```
+
+Separating the MentHlth column out by the Diabetic diagnosis does not show any change in the Kolmogorov-Smirnov normality test, with a p-value of significantly less than the alpha value of 0.05.
+
+__Code__: _R_
+```{r}
+#perform shapiro-wilk test
+lillie.test(data.clean$MentHlth[data.clean$Diabetes_binary == 1])
+```
+Again using the Lillie Fors method, does not change the results of the Kolmogorov-Smirnov normality test, with a p-value of significantly less than the alpha value of 0.05.
+
+\newpage
+__Code__: _R_
+```{r}
+
+# qq plot of BMI distribution for Diabetic diagnosis
+qplot(sample = MentHlth, data = data.clean[data.clean$Diabetes_binary == 1,])+
+labs(title="Q-Q MentHlth / Diabetic Ratings",
+       y = "Sample Quantile")+ 
+  stat_qq() + 
+  stat_qq_line(colour = "orange")
+ggsave(path='./graphs',filename = '13_mentlhlth_dia_qq.png', dpi = 300)
+```
+As expected the qq plot shows similar shape when separated by diagnosis to to the the MnthHlth column as a whole.
+
+__Code__: _R_
+```{r warning=FALSE}
+
+#perform kolmogorov-smirnov test
+ks.test(data.clean$MentHlth[data.clean$Diabetes_binary == 0], 'pnorm')
+
+```
+The same results are seen for the people have not been diagnosed with diabetes with a p-value of less than the alpha 0.05 for the normality test.
+\newpage
+
+__Code__: _R_
+```{r}
+#perform shapiro-wilk test
+lillie.test(data.clean$MentHlth[data.clean$Diabetes_binary == 0])
+
+```
+The Lillie Fors method again doesn't change the p-value in any way for the non-Diabetic people.
+
+__Code__: _R_
+```{r fig.height=2,fig.width=4}
+# qq plot of BMI distribution for Non-Diabetic diagnosis
+qplot(sample = MentHlth, data = data.clean[data.clean$Diabetes_binary == 0,])+
+labs(title="Q-Q MentHlth / Non-Diabetic Ratings",
+       y = "Sample Quantile")+ 
+  stat_qq() + 
+  stat_qq_line(colour = "blue")
+ggsave(path='./graphs',filename = '14_mntlhlth_non_dia_qq.png', dpi = 300)
+```
+And the qq plot shows a similar trend to the previous qq plots for the MntHlth column with not normally distributed data.
+
+
+__Code__: _R_
+```{r}
+
+m <- mean(data.clean$MentHlth)
+md <- median(data.clean$MentHlth)
+s <- sd(data.clean$MentHlth)
+v <- var(data.clean$MentHlth)
+
+sprintf("Mean: %f Median: %f SD: %f Var: %f", m, md, s, v)
+```
+The box plots and histograms previous indicated a high degree of values in the 0 to 5 day range and it can be seen from the mean of 3.75 and the median of 0 that this is the case, with a standard deviation of 8.15 and a variance of 66.514.
+
+\newpage
+
+## PhysHlth
+
+Exploring the MentHlth feature and its individual relationship to the diabetes diagnosis. In the CDC survey the values in the data represent how many days during the past 30 days the persons physical health not good.
+
+### Distributions
+First the distribution characteristics of the PhysHlth feature will be explored, then the distributions of the PhysHlth between the Diabetic and Non-Diabetic groups.
+
+
+__Code__: _R_
+```{r}
+# histogram distribution
+ggplot(data.clean, aes(x = PhysHlth)) + 
+  geom_histogram(fill='royalblue1', alpha = 0.75, bins=30)+
+  ggtitle("PhysHlth Distribution")
+ggsave(path='./graphs',filename = '15_physhlth_dist.png', dpi = 300)
+```
+The distribution in the PhysHlth column has a similar shape to that of the MntHlth column with a higher frequency in the 0 day range. 
+
+\newpage
+__Code__: _R_
+```{r}
+# box plot of BMI range
+ggplot(data.clean, aes(y = PhysHlth)) + 
+  stat_boxplot(geom = "errorbar",
+               width = 0.15,
+               color = 1) +  # Error bar color
+  geom_boxplot(fill = 'darkorange1',           # Box color
+               alpha = 0.5,        # Transparency
+               color = 1,          # Border color
+               outlier.colour = 2)+
+  ggtitle("PhysHlth Boxplot")
+ggsave(path='./graphs',filename = '16_physhlth_box.png', dpi = 300)
+```
+The box plot of the PhysHlth column again shows a high weighting in the 0 to 5 day range with outliers out to the max day range of 30 days. Similar to the MntHlth column this could possible be interpreted as a factor.
+
+
+__Code__: _R_
+```{r}
+# grouped histogram of BMI by diabetic diagnosis
+ggplot(data.clean, aes(x = PhysHlth, fill = Diabetes_binary)) + 
+  geom_histogram(alpha = 0.5, position = "identity", bins=30)+
+  scale_fill_manual(values = c("royalblue1", "darkorange1"))+
+  ggtitle("Distribution of PhysHlth (Diabetic / Non-Diabetic)")
+ggsave(path='./graphs',filename = '17_physhlth_both_dist.png', dpi = 300)
+```
+Again the distribution when grouped by the Diabetes diagnosis follows a similar pattern with the exception that people reported as having Diabetes have a higher number of days reported as "not good" than those without diabetes. Futher testing will be carried out to see if this has a significant impact on diagnosis.
+
+__Code__: _R_
+```{r}
+ggplot(data.clean, aes(x = Diabetes_binary, y = PhysHlth, fill = Diabetes_binary)) + 
+  stat_boxplot(geom = "errorbar",
+               width = 0.25) + 
+  geom_boxplot(alpha = 0.5)+
+  scale_fill_manual(values = c("royalblue1", "darkorange1"))+
+  ggtitle("PhysHlth (Diabetic / Non-Diabetic)")
+ggsave(path='./graphs',filename = '18_physhlth_both_box.png', dpi = 300)
+```
+The box plot shows that most of the outliers appear in the non-diabetic cohort while the diabetic cohort appears to have most of its values within the quartile range. 
+
+### Normality testing
+&nbsp;
+Normality will be tested for the PhysHlth feature and same as previous it will be tested as as a whole as well as divided into the two Diabetic diagnosis groups.
+
+QQ plots will be used for visualizing the normality as well as normality testing where an alpha value of 0.05 is used to determine the distribution normality.
+
+__Code__: _R_
+```{r warning=FALSE}
+
+#perform kolmogorov-smirnov test
+ks.test(data.clean$PhysHlth, 'pnorm')
+
+```
+The Kolmogorov-Smirnov normality test on the PhysHlth feature, as expected, indicates that the data isn't normally distributed with a p-value of significantly less than the alpha value of 0.05.
+
+__Code__: _R_
+```{r}
+#perform shapiro-wilk test
+lillie.test(data.clean$PhysHlth)
+```
+Also as expected, the Kolmogorov-Smirnov normality test using the Lillie Fors correction returns a similar p-value of significantly less than the alpha value of 0.05.
+
+__Code__: _R_
+```{r}
+# qq plot of BMI distribution
+qplot(sample = PhysHlth, data = data.clean)+
+labs(title="Q-Q PhysHlth Ratings",
+       y = "Sample Quantile")+ 
+  stat_qq() + 
+  stat_qq_line(colour = "red")
+ggsave(path='./graphs',filename = '19_physhlth_qq.png', dpi = 300)
+```
+
+A qq plot of the overall PhysHlth column returns a plot as expected similar to the MntHlth column and shows the data is not normally distributed
+
+
+__Code__: _R_
+```{r warning=FALSE}
+
+#perform kolmogorov-smirnov test
+ks.test(data.clean$PhysHlth[data.clean$Diabetes_binary == 1], 'pnorm')
+
+```
+The Kolmogorov-Smirnov normality test on the PhysHlth feature grouped by Diabetic people, again indicates that the data isn't normally distributed with a p-value of significantly less than the alpha value of 0.05.
+
+
+__Code__: _R_
+```{r}
+#perform shapiro-wilk test
+lillie.test(data.clean$PhysHlth[data.clean$Diabetes_binary == 1])
+```
+And the Kolmogorov-Smirnov normality test using the Lillie Fors correction returns a similar p-value of significantly less than the alpha value of 0.05 when grouped by Diabetic people.
+
+
+__Code__: _R_
+```{r}
+
+# qq plot of BMI distribution for Diabetic diagnosis
+qplot(sample = PhysHlth, data = data.clean[data.clean$Diabetes_binary == 1,])+
+labs(title="Q-Q PhysHlth / Diabetic Ratings",
+       y = "Sample Quantile")+ 
+  stat_qq() + 
+  stat_qq_line(colour = "orange")
+ggsave(path='./graphs',filename = '20_physhlth_dia_qq.png', dpi = 300)
+
+```
+The qq plot of the grouped Diabetic people also shows a similar shape to the overall PhysHlth column qq plot previous.
+
+__Code__: _R_
+```{r warning=FALSE}
+
+#perform kolmogorov-smirnov test
+ks.test(data.clean$PhysHlth[data.clean$Diabetes_binary == 0], 'pnorm')
+
+```
+The Kolmogorov-Smirnov normality test on the PhysHlth feature grouped by non-Diabetic people, again indicates that the data isn't normally distributed with a p-value of significantly less than the alpha value of 0.05.
+
+__Code__: _R_
+```{r}
+#perform shapiro-wilk test
+lillie.test(data.clean$PhysHlth[data.clean$Diabetes_binary == 0])
+```
+
+And the Kolmogorov-Smirnov normality test using the Lillie Fors correction returns a similar p-value of significantly less than the alpha value of 0.05 when grouped by non-Diabetic people.
+
+
+__Code__: _R_
+```{r}
+# qq plot of BMI distribution for Non-Diabetic diagnosis
+qplot(sample = PhysHlth, data = data.clean[data.clean$Diabetes_binary == 0,])+
+labs(title="Q-Q PhysHlth / Non-Diabetic Ratings",
+       y = "Sample Quantile")+ 
+  stat_qq() + 
+  stat_qq_line(colour = "blue")
+ggsave(path='./graphs',filename = '21_physhlth_non_dia_qq.png', dpi = 300)
+```
+The qq plot of the grouped non-Diabetic people also shows a similar shape to the overall PhysHlth column qq plot and the Diabetic groups previous.
+
+__Code__: _R_
+```{r}
+
+m <- mean(data.clean$PhysHlth)
+md <- median(data.clean$PhysHlth)
+s <- sd(data.clean$PhysHlth)
+v <- var(data.clean$PhysHlth)
+
+sprintf("Mean: %f Median:%f SD: %f Var: %f", m, md, s, v)
+```
+The mean days for PhysHlth is slightly higher than the MntHlth at 5.8 with a median of zero, the standard deviation is higher than the MnthHlth feature at 10 days with a variance of 101.24
+
+\newpage
+
+## HighBP - logical factor
+
+The High Blood Pressure factor in the CDC survey is from the question, Adults who have been told they have high blood pressure by a doctor, nurse, or other health professional with a TRUE or FALSE value.
+
+This can sometimes be an indicator or many different possible medical diagnosis not just diabetes but for the purposes of this analysis it will be checked how much of an impact this can have on predicting the possibility of Diabetes.
+
+### Factor Frequency
+
+The count of each value will be checked, both on its own and by the different predictor cohorts for the analysis to see if there are any insights that can be ascertained straight away. 
+
+__Code__: _R_
+```{r}
+# freq
+ggplot(data.clean, aes(HighBP)) +    
+  geom_bar(fill='royalblue1', alpha = 0.75)+
+  ggtitle("HighBP Freq")
+ggsave(path='./graphs',filename = '22_highBP_freq.png', dpi = 300)
+```
+
+The data shows that from the survey there is a higher number of people with high blood pressure.
+
+__Code__: _R_
+```{r}
+# freq with diabetes diagnosis
+ggplot(data.clean, aes(x = HighBP, fill = Diabetes_binary)) + 
+  geom_bar(alpha = 0.75) + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))+
+  scale_fill_manual(values = c("royalblue1", "darkorange1"))+
+  ggtitle("HighBP Freq(Diabetes / Non-Diabetes)")
+ggsave(path='./graphs',filename = '23_highBP_both_freq.png', dpi = 300)
+```
+
+When adding the diabetic groups to the bar chart, there appears to be a higher percentage of people diagnised with diabetes that also have high blood pressure.
+
+__Code__: _R_
+```{r}
+# percent of each factor
+table <- as.data.frame(prop.table(table(data.clean$HighBP))*100)
+names(table) <- c("HighBP", "Percent")
+table
+```
+
+Confirming the results of the blood pressure bar chart, 56.35% of people report having high blood pressure versus 43.65% of people not having high blood pressure.
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table2 <- xtabs(~ Diabetes_binary + HighBP, data=data.clean)
+table2 <- as.data.frame(table2)
+table2$Percent <- round(100*(table2$Freq/sum(table2$Freq[table2$Diabetes_binary==0])),digits=2)
+table2
+```
+From the high blood pressure feature, 75.27% of people from the survey who are diagnosed with Diabetes also have high blood pressure, where as only 37.42% of the people that are diagnosed as not having Diabetes have high blood pressure.
+
+
+## HighChol - logical factor
+
+The question from the survey is - Have you EVER been told by a doctor, nurse or other health professional that your blood cholesterol is high.
+
+### Factor Frequency
+
+The count of each value will be checked, both on its own and by the different predictor cohorts for the analysis to see if there are any insights that can be ascertained straight away. 
+
+__Code__: _R_
+```{r}
+# freq
+ggplot(data.clean, aes(HighChol)) +    
+  geom_bar(fill='royalblue1', alpha = 0.75)+
+  ggtitle("HighChol Freq")
+ggsave(path='./graphs',filename = '24_highChol_freq.png', dpi = 300)
+
+```
+
+__Code__: _R_
+```{r}
+# freq with diabetes diagnosis
+ggplot(data.clean, aes(x = HighChol, fill = Diabetes_binary)) + 
+  geom_bar(alpha = 0.75) + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))+
+  scale_fill_manual(values = c("royalblue1", "darkorange1"))+
+  ggtitle("HighChol Freq(Diabetes / Non-Diabetes)")
+ggsave(path='./graphs',filename = '25_highChol_both_freq.png', dpi = 300)
+```
+__Code__: _R_
+```{r}
+# percent of each factor
+table <- as.data.frame(prop.table(table(data.clean$HighChol))*100)
+names(table) <- c("HighChol", "Percent")
+table
+```
+
+There is an approximate even split between people who have reported ever having high cholesterol versus people who have not with 52.57% True and 47.43% False.
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table2 <- xtabs(~ Diabetes_binary + HighChol, data=data.clean)
+table2 <- as.data.frame(table2)
+table2$Percent <- round(100*(table2$Freq/sum(table2$Freq[table2$Diabetes_binary==0])),digits=2)
+table2
+```
+
+From the diabetic group there is 67.01% that have reported high cholesterol versus only 32.99% not having high cholesterol. This appears to be a significant difference and could be heavy determining factor in diagnosing diabetes. 
+
+## CholCheck - logical factor
+
+The question in the survey for this factor is - Cholesterol check within past five years. Having a high percentage of TRUE in this factor would lead to the assumption that the results from the previous column are accurate and noteworthy.
+
+
+### Factor Frequency
+
+The count of each value will be checked, both on its own and by the different predictor cohorts for the analysis to see if there are any insights that can be ascertained straight away. 
+
+__Code__: _R_
+```{r}
+# freq
+ggplot(data.clean, aes(CholCheck)) +    
+  geom_bar(fill='royalblue1', alpha = 0.75)+
+  ggtitle("CholCheck Freq")
+ggsave(path='./graphs',filename = '26_cholCheck_freq.png', dpi = 300)
+```
+
+__Code__: _R_
+```{r}
+# freq with diabetes diagnosis
+ggplot(data.clean, aes(x = CholCheck, fill = Diabetes_binary)) + 
+  geom_bar(alpha = 0.75) + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))+
+  scale_fill_manual(values = c("royalblue1", "darkorange1"))+
+  ggtitle("CholCheck Freq (Diabetes / Non-Diabetes)")
+ggsave(path='./graphs',filename = '27_cholCheck_both_freq.png', dpi = 300)
+```
+
+__Code__: _R_
+```{r}
+# percent of each factor
+table <- as.data.frame(prop.table(table(data.clean$CholCheck))*100)
+names(table) <- c("CholCheck", "Percent")
+table
+```
+
+97.53% of the respondents have had there cholesterol checked in the previous five years.
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table2 <- xtabs(~ Diabetes_binary + CholCheck, data=data.clean)
+table2 <- as.data.frame(table2)
+table2$Percent <- round(100*(table2$Freq/sum(table2$Freq[table2$Diabetes_binary==0])),digits=2)
+table2
+```
+
+Seen as 97.53% of respondents have had their cholesterol checked it is a good indicator that the high cholesterol column has valid data.
+
+It also shows that both 99.32% of people with Diabetes and 95.73% of people without diabetes have had their cholesterol checked in the previous five years.
+
+
+## Smoker - 2 level factor
+
+The question from the survey asked - Have you smoked at least 100 cigarettes in your entire life? this question doesn't take into account when someone smoked or if they did, how long ago did they quit, or how many over the 100 mark did they smoke. 
+
+### Factor Frequency
+
+The count of each value will be checked, both on its own and by the different predictor cohorts for the analysis to see if there are any insights that can be ascertained straight away. 
+
+
+__Code__: _R_
+```{r}
+# freq
+ggplot(data.clean, aes(Smoker)) +    
+  geom_bar(fill='royalblue1', alpha = 0.75)+
+  ggtitle("Smoker Freq")
+ggsave(path='./graphs',filename = '28_smoker_freq.png', dpi = 300)
+```
+
+__Code__: _R_
+```{r}
+# freq with diabetes diagnosis
+ggplot(data.clean, aes(x = Smoker, fill = Diabetes_binary)) + 
+  geom_bar(alpha = 0.75) + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))+
+  scale_fill_manual(values = c("royalblue1", "darkorange1"))+
+  ggtitle("Smoker Freq (Diabetes / Non-Diabetes)")
+ggsave(path='./graphs',filename = '29_smoker_both_freq.png', dpi = 300)
+```
+
+__Code__: _R_
+```{r}
+# percent of each factor
+table <- as.data.frame(prop.table(table(data.clean$Smoker))*100)
+names(table) <- c("Smoker", "Percent")
+table
+```
+
+The appears an approximate even split in the survey of people who have or have no smoked with 54.47% not having smoked and 47.53% having smoked. it is yet to be determined if this split is statistically significant.
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table2 <- xtabs(~ Diabetes_binary + Smoker, data=data.clean)
+table2 <- as.data.frame(table2)
+table2$Percent <- round(100*(table2$Freq/sum(table2$Freq[table2$Diabetes_binary==0])),digits=2)
+table2
+```
+
+For the cohort that has a diabetes diagnosis 51.82% of people have smoke and 48.18% of people haven't smoked more than 100 cigarettes.
+
+
+## Stroke - 2 level factor
+
+The survey question asks - (Ever told) you had a stroke. There has been studies to argue the hypothesis that diabetes can be a risk factor for stroke but not the other way around.[link](https://academic.oup.com/aje/article-abstract/128/1/116/80127)
+
+### Factor Frequency
+
+The count of each value will be checked, both on its own and by the different predictor cohorts for the analysis to see if there are any insights that can be ascertained straight away. 
+
+
+__Code__: _R_
+```{r}
+# freq
+ggplot(data.clean, aes(Stroke)) +    
+  geom_bar(fill='royalblue1', alpha = 0.75)+
+  ggtitle("Stroke Freq")
+ggsave(path='./graphs',filename = '30_stroke_freq.png', dpi = 300)
+
+```
+
+__Code__: _R_
+```{r}
+# freq with diabetes diagnosis
+ggplot(data.clean, aes(x = Stroke, fill = Diabetes_binary)) + 
+  geom_bar(alpha = 0.75) + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))+
+  scale_fill_manual(values = c("royalblue1", "darkorange1"))+
+  ggtitle("Stroke Freq (Diabetes / Non-Diabetes)")
+ggsave(path='./graphs',filename = '31_stroke_both_freq.png', dpi = 300)
+```
+
+__Code__: _R_
+```{r}
+# percent of each factor
+table <- as.data.frame(prop.table(table(data.clean$Stroke))*100)
+names(table) <- c("Stroke", "Percent")
+table
+```
+
+Only 6.22% of the study respondents reported having a been told they have had a stroke. 
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table2 <- xtabs(~ Diabetes_binary + Stroke, data=data.clean)
+table2 <- as.data.frame(table2)
+table2$Percent <- round(100*(table2$Freq/sum(table2$Freq[table2$Diabetes_binary==0])),digits=2)
+table2
+```
+
+Of the people diagnosed with Diabetes in the study only 9.25% of people had been told they have had a stroke but from the number of people who have been told they had a stroke 74.36% of people where Diabetes sufferers. 
+
+There is no indication in the survey though when the patient had the stroke, if it was before or after Diabetes diagnosis or if Diabetes was a risk a factor in that stroke. The percent does indicate that there is some correlation between the two. 
+
+## HeartDiseaseorAttack - 2 level factor
+
+The survey question asked for this column was - Have ever reported having coronary heart disease (CHD) or myocardial infarction(MI). There are papers that show an increased risk of heart disease with diabetes [link](https://www.ajkd.org/article/S0272-6386(98)00337-0/fulltext) but can it show the reverse.
+
+### Factor Frequency
+
+The count of each value will be checked, both on its own and by the different predictor cohorts for the analysis to see if there are any insights that can be ascertained straight away. 
+
+
+__Code__: _R_
+```{r}
+# freq
+ggplot(data.clean, aes(HeartDiseaseorAttack)) +    
+  geom_bar(fill='royalblue1', alpha = 0.75)+
+  ggtitle("HeartDiseaseorAttack Freq")
+ggsave(path='./graphs',filename = '32_heartDis_freq.png', dpi = 300)
+```
+
+__Code__: _R_
+```{r}
+# freq with diabetes diagnosis
+ggplot(data.clean, aes(x = HeartDiseaseorAttack, fill = Diabetes_binary)) + 
+  geom_bar(alpha = 0.75) + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))+
+  scale_fill_manual(values = c("royalblue1", "darkorange1"))+
+  ggtitle("HeartDiseaseorAttack Freq (Diabetes / Non-Diabetes)")
+ggsave(path='./graphs',filename = '33_heartDis_both_freq.png', dpi = 300)
+```
+__Code__: _R_
+```{r}
+# percent of each factor
+table <- as.data.frame(prop.table(table(data.clean$HeartDiseaseorAttack))*100)
+names(table) <- c("HeartDiseaseorAttack", "Percent")
+table
+```
+
+14.78% of people in the survey reported having heart disease of some kind.
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table2 <- xtabs(~ Diabetes_binary + HeartDiseaseorAttack, data=data.clean)
+table2 <- as.data.frame(table2)
+table2$Percent <- round(100*(table2$Freq/sum(table2$Freq[table2$Diabetes_binary==0])),digits=2)
+table2
+```
+From the 14.78% of people with some type of heart disease, 75.69% of those people have been diagnosed with Diabetes.
+
+\newpage
+
+## PhysActivity - logical factor
+
+The survey question for this column was - Adults who reported doing physical activity or exercise during the past 30 days other than their regular job. Study [link](https://onlinelibrary.wiley.com/doi/abs/10.1002/dmrr.983)
+
+### Factor Frequency
+
+The count of each value will be checked, both on its own and by the different predictor cohorts for the analysis to see if there are any insights that can be ascertained straight away. 
+
+
+__Code__: _R_
+```{r}
+# freq
+ggplot(data.clean, aes(PhysActivity)) +    
+  geom_bar(fill='royalblue1', alpha = 0.75)+
+  ggtitle("PhysActivity Freq")
+ggsave(path='./graphs',filename = '34_physactive_freq.png', dpi = 300)
+```
+
+__Code__: _R_
+```{r}
+# freq with diabetes diagnosis
+ggplot(data.clean, aes(x = PhysActivity, fill = Diabetes_binary)) + 
+  geom_bar(alpha = 0.75) + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))+
+  scale_fill_manual(values = c("royalblue1", "darkorange1"))+
+  ggtitle("PhysActivity Freq (Diabetes / Non-Diabetes)")
+ggsave(path='./graphs',filename = '35_physactive_both_freq.png', dpi = 300)
+```
+
+__Code__: _R_
+```{r}
+# percent of each factor
+table <- as.data.frame(prop.table(table(data.clean$PhysActivity))*100)
+names(table) <- c("PhysActivity", "Percent")
+table
+```
+
+29.70% of the people in the survey report not having done any physical activity outside their normal job in the previous 30 days. 
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table2 <- xtabs(~ Diabetes_binary + PhysActivity, data=data.clean)
+table2 <- as.data.frame(table2)
+table2$Percent <- round(100*(table2$Freq/sum(table2$Freq[table2$Diabetes_binary==0])),digits=2)
+table2
+```
+62.20% of those who have not done any physical activity are from the Diabetes diagnosed cohort. From the Diabetes cohort as a whole 63.05% had completed physical activity while 36.95% hadn't but for the non-diabetic people 77.55% had and only 22.45% hadn't. Al thought this measure could be biased dependent on a persons perspective of physical activity it does indicate that Diabetic people have a higher amount of inactivity than non-diabetic people.
+
+## Fruits - logical factor
+
+The study question asked - Consume Fruit 1 or more times per day. Study on Diet: [link](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5426415/)
+
+### Factor Frequency
+
+The count of each value will be checked, both on its own and by the different predictor cohorts for the analysis to see if there are any insights that can be ascertained straight away. 
+
+
+__Code__: _R_
+```{r}
+# freq 
+ggplot(data.clean, aes(Fruits)) +    
+  geom_bar(fill='royalblue1', alpha = 0.75)+
+  ggtitle("Fruits Freq")
+ggsave(path='./graphs',filename = '36_fruits_freq.png', dpi = 300)
+```
+
+__Code__: _R_
+```{r}
+# freq with diabetes diagnosis
+ggplot(data.clean, aes(x = Fruits, fill = Diabetes_binary)) + 
+  geom_bar(alpha = 0.75) + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))+
+  scale_fill_manual(values = c("royalblue1", "darkorange1"))+
+  ggtitle("Fruits Freq(Diabetes / Non-Diabetes)")
+ggsave(path='./graphs',filename = '37_fruits_both_freq.png', dpi = 300)
+```
+
+__Code__: _R_
+```{r}
+# percent of each factor
+table <- as.data.frame(prop.table(table(data.clean$Fruits))*100)
+names(table) <- c("Fruits", "Percent")
+table
+```
+
+61.17% of people reported eating 1 or more fruits per day
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table2 <- xtabs(~ Diabetes_binary + Fruits, data=data.clean)
+table2 <- as.data.frame(table2)
+table2$Percent <- round(100*(table2$Freq/sum(table2$Freq[table2$Diabetes_binary==0])),digits=2)
+table2
+```
+For the diabetic group 58.54% reported eating fruit per day compared to the non diabetic group where 63.81% reported eating one or more fruits per day.
+
+## Veggies - logical factor
+
+The study question for this column was - Consume Vegetables 1 or more times per day
+
+
+### Factor Frequency
+
+The count of each value will be checked, both on its own and by the different predictor cohorts for the analysis to see if there are any insights that can be ascertained straight away. 
+
+
+__Code__: _R_
+```{r}
+# freq
+ggplot(data.clean, aes(Veggies)) +    
+  geom_bar(fill='royalblue1', alpha = 0.75)+
+  ggtitle("Veggies Freq")
+ggsave(path='./graphs',filename = '38_veggies_freq.png', dpi = 300)
+```
+
+__Code__: _R_
+```{r}
+# freq with diabetes diagnosis
+ggplot(data.clean, aes(x = Veggies, fill = Diabetes_binary)) + 
+  geom_bar(alpha = 0.75) + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))+
+  scale_fill_manual(values = c("royalblue1", "darkorange1"))+
+  ggtitle("Veggies Freq (Diabetes / Non-Diabetes)")
+ggsave(path='./graphs',filename = '39_veggies_both_freq.png', dpi = 300)
+```
+
+__Code__: _R_
+```{r}
+# percent of each factor
+table <- as.data.frame(prop.table(table(data.clean$Veggies))*100)
+names(table) <- c("Veggies", "Percent")
+table
+```
+
+78.87% of people reported eating 1 more vegatables a day compared to 21.13% not eating vegatables.
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table2 <- xtabs(~ Diabetes_binary + Veggies, data=data.clean)
+table2 <- as.data.frame(table2)
+table2$Percent <- round(100*(table2$Freq/sum(table2$Freq[table2$Diabetes_binary==0])),digits=2)
+table2
+```
+
+Of the diabetic group 75.64% reported eating vegetables compared to 82.11% from the non diabetic, From the the group that reported to not eat 1 or more vegetables a day 57.66% of them where diabetic. 
+
+## HvyAlcoholConsump - logical factor
+
+For this column the question in the survey was around the number of drinks per week from adults -  Heavy drinkers (adult men having more than 14 drinks per week and adult women having more than 7 drinks per week), resulting in a boolean output.
+ 
+
+### Factor Frequency
+
+The count of each value will be checked, both on its own and by the different predictor cohorts for the analysis to see if there are any insights that can be ascertained straight away. 
+
+__Code__: _R_
+```{r}
+# freq 
+ggplot(data.clean, aes(HvyAlcoholConsump)) +    
+  geom_bar(fill='royalblue1', alpha = 0.75)+
+  ggtitle("HvyAlcoholConsump Freq")
+ggsave(path='./graphs',filename = '40_hvyAlcho_freq.png', dpi = 300)
+```
+
+
+__Code__: _R_
+```{r}
+# freq with diabetes diagnosis
+ggplot(data.clean, aes(x = HvyAlcoholConsump, fill = Diabetes_binary)) + 
+  geom_bar(alpha = 0.75) + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))+
+  scale_fill_manual(values = c("royalblue1", "darkorange1"))+
+  ggtitle("HvyAlcoholConsump Freq (Diabetes / Non-Diabetes)")
+ggsave(path='./graphs',filename = '41_hvyAlcho_both_freq.png', dpi = 300)
+```
+
+__Code__: _R_
+```{r}
+# percent of each factor
+table <- as.data.frame(prop.table(table(data.clean$HvyAlcoholConsump))*100)
+names(table) <- c("HvyAlcoholConsump", "Percent")
+table
+```
+
+95.72% of repsondents had no signs of heavy alchohol drinking.
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table2 <- xtabs(~ Diabetes_binary + HvyAlcoholConsump, data=data.clean)
+table2 <- as.data.frame(table2)
+table2$Percent <- round(100*(table2$Freq/sum(table2$Freq[table2$Diabetes_binary==0])),digits=2)
+table2
+```
+
+Heavy alcohol appears more prevalent in people without diabetes where 97.65% of the diabetic group did not show signs of heavy alcohol consumption compared to 93.81% of people without diabetes. This column may impact any modelling where a person who does not consume alcohol could indicate diabetes where it could be due to a diet restriction after being diagnosed as diabetic.
+
+## AnyHealthcare - 2 level factor
+
+The question for this column in the survey was - Do you have any kind of health care coverage
+
+
+### Factor Frequency
+
+The count of each value will be checked, both on its own and by the different predictor cohorts for the analysis to see if there are any insights that can be ascertained straight away. 
+
+
+__Code__: _R_
+```{r}
+# freq
+ggplot(data.clean, aes(AnyHealthcare)) +    
+  geom_bar(fill='royalblue1', alpha = 0.75)+
+  ggtitle("AnyHealthcare Freq")
+ggsave(path='./graphs',filename = '42_hlthCare_freq.png', dpi = 300)
+```
+
+
+__Code__: _R_
+```{r}
+# freq with diabetes diagnosis
+ggplot(data.clean, aes(x = AnyHealthcare, fill = Diabetes_binary)) + 
+  geom_bar(alpha = 0.75) + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))+
+  scale_fill_manual(values = c("royalblue1", "darkorange1"))+
+  ggtitle("AnyHealthcare Freq (Diabetes / Non-Diabetes)")
+ggsave(path='./graphs',filename = '43_hvyAlcho_both_freq.png', dpi = 300)
+
+```
+
+__Code__: _R_
+```{r}
+# percent of each factor
+table <- as.data.frame(prop.table(table(data.clean$AnyHealthcare))*100)
+names(table) <- c("AnyHealthcare", "Percent")
+table
+```
+
+95.49% of people reported havng some kind of healthcare
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table2 <- xtabs(~ Diabetes_binary + AnyHealthcare, data=data.clean)
+table2 <- as.data.frame(table2)
+table2$Percent <- round(100*(table2$Freq/sum(table2$Freq[table2$Diabetes_binary==0])),digits=2)
+table2
+```
+
+There appears to be no major difference in the number of people with or without diabetes reporting to have some kind of healthcare, this could be a cultural aspect as this survey was conducted in the United States and may not have any real impact on any modelling.
+
+
+## NoDocbcCost - 2 level factor
+
+The survey question for this columns was -  Was there a time in the past 12 months when you needed to see a doctor but could not because of cost?, Due to the high number of people with healthcare in the previous column it would be expected that the majority of people would answer no to this question.
+
+
+### Factor Frequency
+
+The count of each value will be checked, both on its own and by the different predictor cohorts for the analysis to see if there are any insights that can be ascertained straight away. 
+
+__Code__: _R_
+```{r}
+# freq
+ggplot(data.clean, aes(NoDocbcCost)) +    
+  geom_bar(fill='royalblue1', alpha = 0.75)+
+  ggtitle("NoDocbcCost Freq")
+ggsave(path='./graphs',filename = '44_noDocCost_freq.png', dpi = 300)
+```
+
+__Code__: _R_
+```{r}
+# freq with diabetes diagnosis
+ggplot(data.clean, aes(x = NoDocbcCost, fill = Diabetes_binary)) + 
+  geom_bar(alpha = 0.75) + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))+
+  scale_fill_manual(values = c("royalblue1", "darkorange1"))+
+  ggtitle("NoDocbcCost Freq (Diabetes / Non-Diabetes)")
+ggsave(path='./graphs',filename = '44_noDocCost_both_freq.png', dpi = 300)
+```
+__Code__: _R_
+```{r}
+# percent of each factor
+table <- as.data.frame(prop.table(table(data.clean$NoDocbcCost))*100)
+names(table) <- c("NoDocbcCost", "Percent")
+table
+```
+
+As expected 90.60% of people reported no to this question
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table2 <- xtabs(~ Diabetes_binary + NoDocbcCost, data=data.clean)
+table2 <- as.data.frame(table2)
+table2$Percent <- round(100*(table2$Freq/sum(table2$Freq[table2$Diabetes_binary==0])),digits=2)
+table2
+```
+Interestingly, from the group with Diabetes, 10.59% reported Yes where as only 8.20% reported Yes from the non-diabetic cohort. 
+
+
+## GenHlth - 5 level factor
+
+The survey question for this column was - Would you say that in general your health is: (asked to choose one of the options), this question like some previous questions could be biased as it depends on a persons perspective of their own health.
+
+### Factor Frequency
+
+The count of each value will be checked, both on its own and by the different predictor cohorts for the analysis to see if there are any insights that can be ascertained straight away. 
+
+
+__Code__: _R_
+```{r}
+# freq 
+ggplot(data.clean, aes(GenHlth)) +    
+  geom_bar(fill='royalblue1', alpha = 0.75)+
+  ggtitle("GenHlth Freq")
+ggsave(path='./graphs',filename = '45_genHlth_freq.png', dpi = 300)
+```
+
+
+__Code__: _R_
+```{r}
+# freq with diabetes diagnosis
+ggplot(data.clean, aes(x = GenHlth, fill = Diabetes_binary)) + 
+  geom_bar(alpha = 0.75) + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))+
+  scale_fill_manual(values = c("royalblue1", "darkorange1"))+
+  ggtitle("GenHlth Freq (Diabetes / Non-Diabetes)")
+ggsave(path='./graphs',filename = '46_genHlth_both_freq.png', dpi = 300)
+```
+
+__Code__: _R_
+```{r}
+# percent of each factor
+table <- as.data.frame(prop.table(table(data.clean$GenHlth))*100)
+names(table) <- c("GenHlth", "Percent")
+table
+```
+
+The results show that the largest groups where Good with 33.14% of the people and Very Good with 28.11% of the people.
+
+__Code__: _R_
+```{r}
+# creating x tab for python data
+table2 <- xtabs(~ GenHlth + Diabetes_binary, data=data.clean)
+table2 <- as.data.frame(table2)
+data_py <- table2
+
+```
+
+Checking the percentages per group of Diabetic and non diabetic
+
+__Code__: _Python_
+```{python}
+import pandas as pd
+
+df = pd.DataFrame(r.data_py)
+
+# grouping by factor and getting percentages
+df['Percentage'] = ((df['Freq'] / df.groupby(['GenHlth'])['Freq'].transform('sum'))*100).round(2)
+df = df.sort_values('GenHlth', ascending=False)
+df
+
+```
+
+In the very good and excellent groups, diabetics represent 32.11% and 13.75% of the respondents where as in the good, fair and poor groups Diabetic people represent 57.44%, 73.59% and 78.82% of each group. This could be as a result of their diagnosis and could possibly be an indicator but could also lean toward a bias nature. 
+
+## DiffWalk - 2 level factor
+
+For this column the survey question asked - Do you have serious difficulty walking or climbing stairs?
+
+
+### Factor Frequency
+
+The count of each value will be checked, both on its own and by the different predictor cohorts for the analysis to see if there are any insights that can be ascertained straight away. 
+
+__Code__: _R_
+```{r}
+# freq
+ggplot(data.clean, aes(DiffWalk)) +    
+  geom_bar(fill='royalblue1', alpha = 0.75)+
+  ggtitle("DiffWalk Freq")
+ggsave(path='./graphs',filename = '47_difWalk_freq.png', dpi = 300)
+```
+
+__Code__: _R_
+```{r}
+# freq with diabetes diagnosis
+ggplot(data.clean, aes(x = DiffWalk, fill = Diabetes_binary)) + 
+  geom_bar(alpha = 0.75) + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))+
+  scale_fill_manual(values = c("royalblue1", "darkorange1"))+
+  ggtitle("DiffWalk Freq (Diabetes / Non-Diabetes)")
+ggsave(path='./graphs',filename = '48_difWalk_both_freq.png', dpi = 300)
+```
+__Code__: _R_
+```{r}
+# percent of each factor
+table <- as.data.frame(prop.table(table(data.clean$DiffWalk))*100)
+names(table) <- c("DiffWalk", "Percent")
+table
+```
+
+74.72% of the people responded with no they have no difficulty, where 25.28% responded with yes.
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table2 <- xtabs(~ Diabetes_binary + DiffWalk, data=data.clean)
+table2 <- as.data.frame(table2)
+table2$Percent <- round(100*(table2$Freq/sum(table2$Freq[table2$Diabetes_binary==0])),digits=2)
+table2
+```
+
+From the group that have a diagnosis of diabetes 37.12% reported having difficulty where only 13.42% of the non-diabetic people had difficulty. Again there is no initial indication whether this is a result of the diagnosis or not but the presence of a higher percentage with diabetes that do have difficulty could result in an indicator.
+
+## Sex - 2 level factor
+
+The survey question for this column simply asked the sex of the person. 
+
+### Factor Frequency
+
+The count of each value will be checked, both on its own and by the different predictor cohorts for the analysis to see if there are any insights that can be ascertained straight away. 
+
+__Code__: _R_
+```{r}
+# freq
+ggplot(data.clean, aes(Sex)) +    
+  geom_bar(fill='royalblue1', alpha = 0.75)+
+  ggtitle("Sex Freq")
+ggsave(path='./graphs',filename = '49_sex_freq.png', dpi = 300)
+```
+
+__Code__: _R_
+```{r}
+# freq with diabetes diagnosis
+ggplot(data.clean, aes(x = Sex, fill = Diabetes_binary)) + 
+  geom_bar(alpha = 0.75) + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))+
+  scale_fill_manual(values = c("royalblue1", "darkorange1"))+
+  ggtitle("Sex Freq (Diabetes / Non-Diabetes)")
+ggsave(path='./graphs',filename = '50_sex_both_freq.png', dpi = 300)
+```
+__Code__: _R_
+```{r}
+# percent of each factor
+table <- as.data.frame(prop.table(table(data.clean$Sex))*100)
+names(table) <- c("Sex", "Percent")
+table
+```
+
+54.30% of the people in the survey where female and 45.70% of the people where male.
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table2 <- xtabs(~ Diabetes_binary + Sex, data=data.clean)
+table2 <- as.data.frame(table2)
+table2$Percent <- round(100*(table2$Freq/sum(table2$Freq[table2$Diabetes_binary==0])),digits=2)
+table2
+```
+
+From the group of Diabetic patients 52.09% where female and 47.91% where male. This percentage could be due to the number of males and females in the study but does coincide with findings from this study [link](https://www.cfp.ca/content/54/2/219.short)
+
+
+## Age - 13 level factor
+
+For this column people in the survey where asked their age and where put into one of 13 categories.1:Age 18 to 24,2:Age 25 to 29,3:Age 30 to 34,4:Age 35 to 39,5:Age 40 to 44,6:Age 45 to 49,7:Age 50 to 54,8:Age 55 to 59,9:Age 60 to 64,10:Age 65 to 69,11:Age 70 to 74,12:Age 75 to 79,13:Age 80 or older
+
+### Factor Frequency
+
+The count of each value will be checked, both on its own and by the different predictor cohorts for the analysis to see if there are any insights that can be ascertained straight away. 
+
+
+__Code__: _R_
+```{r}
+# freq 
+ggplot(data.clean, aes(Age)) +    
+  geom_bar(fill='royalblue1', alpha = 0.75)+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  ggtitle("Age Freq")
+ggsave(path='./graphs',filename = '51_age_freq.png', dpi = 300)
+```
+
+__Code__: _R_
+```{r}
+# freq with diabetes diagnosis
+ggplot(data.clean, aes(x = Age, fill = Diabetes_binary)) + 
+  geom_bar(alpha = 0.75) + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))+
+  scale_fill_manual(values = c("royalblue1", "darkorange1"))+
+  ggtitle("Age Freq (Diabetes / Non-Diabetes)")
+ggsave(path='./graphs',filename = '51_age_both_freq.png', dpi = 300)
+```
+
+__Code__: _R_
+```{r}
+# percent of each factor
+table <- as.data.frame(prop.table(table(data.clean$Age))*100)
+names(table) <- c("Age", "Percent")
+table
+```
+The majority of people in this study fell between the ages of 55 and 74. (53.21%)
+
+__Code__: _R_
+```{r}
+# creating x tab for python data
+table2 <- xtabs(~ Age + Diabetes_binary, data=data.clean)
+table2 <- as.data.frame(table2)
+data_py <- table2
+
+```
+
+Checking the percentages per group of Diabetic and non diabetic
+
+__Code__: _Python_
+```{python}
+import pandas as pd
+
+df = pd.DataFrame(r.data_py)
+
+# grouping by factor and getting percentages
+df['Percentage'] = ((df['Freq'] / df.groupby(['Age'])['Freq'].transform('sum'))*100).round(2)
+df = df.sort_values('Age', ascending=False)
+df
+
+```
+
+Age groups with the higher percentage of diabetes prevalent are 70 to 74 (63.91%), 75 to 79 (63.09%), 65 to 69 (60.41%) and 60 to 64 (56.70%) this could be due to the number of people in each age category in the study. 
+\newpage
+
+## Education - 6 level factor
+
+For this column in the data, people where asked - What is the highest grade or year of school you completed? and where placed into one of 6 categories. 1:Never attended school or only kindergarten,2:Grades 1 through 8 (Elementary),3:Grades 9 through 11 (Some high school),4:Grade 12 or GED (High school graduate),5:College 1 year to 3 years (Some college or technical school),6:College 4 years or more (College graduate)
+
+### Factor Frequency
+
+The count of each value will be checked, both on its own and by the different predictor cohorts for the analysis to see if there are any insights that can be ascertained straight away. 
+
+__Code__: _R_
+```{r}
+# freq
+ggplot(data.clean, aes(Education)) +    
+  geom_bar(fill='royalblue1', alpha = 0.75) + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))+
+  ggtitle("Education Freq")
+ggsave(path='./graphs',filename = '52_edu_freq.png', dpi = 300)
+
+```
+
+__Code__: _R_
+```{r}
+# freq with diabetes diagnosis
+ggplot(data.clean, aes(x = Education, fill = Diabetes_binary)) + 
+  geom_bar(alpha = 0.75) + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))+
+  scale_fill_manual(values = c("royalblue1", "darkorange1"))+
+  ggtitle("Education Freq (Diabetes / Non-Diabetes)")
+ggsave(path='./graphs',filename = '53_edu_both_freq.png', dpi = 300)
+```
+__Code__: _R_
+```{r}
+# percent of each factor
+table <- as.data.frame(prop.table(table(data.clean$Education))*100)
+names(table) <- c("Education", "Percent")
+table
+```
+
+91% of people in the survey had achieved a level of education above grade 12 and over 60% attended college (65.14%)
+
+__Code__: _R_
+```{r}
+# creating x tab for python data
+table2 <- xtabs(~ Education + Diabetes_binary, data=data.clean)
+table2 <- as.data.frame(table2)
+data_py <- table2
+
+```
+
+Checking the percentages per group of Diabetic and non diabetic
+
+__Code__: _Python_
+```{python}
+import pandas as pd
+
+df = pd.DataFrame(r.data_py)
+
+# grouping by factor and getting percentages
+df['Percentage'] = ((df['Freq'] / df.groupby(['Education'])['Freq'].transform('sum'))*100).round(2)
+df = df.sort_values('Education', ascending=False)
+df
+
+```
+People that achieved a lower level of education had a higher percentage of diabetes with people achieving between grade 1 to 8 having the highest percentage of diabetes present with 71.83%
+
+## Income - 8 level factor
+
+For this column, people where asked - What is your annual household income from all sources, and placed into one of eight categories.
+
+### Factor Frequency
+
+The count of each value will be checked, both on its own and by the different predictor cohorts for the analysis to see if there are any insights that can be ascertained straight away. 
+
+__Code__: _R_
+```{r fig.height=2,fig.width=4}
+# freq
+ggplot(data.clean, aes(Income)) +    
+  geom_bar(fill='royalblue1', alpha = 0.75) + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))+
+  ggtitle("Income Freq")
+ggsave(path='./graphs',filename = '54_income_freq.png', dpi = 300)
+```
+
+__Code__: _R_
+```{r}
+# freq with diabetes diagnosis
+ggplot(data.clean, aes(x = Income, fill = Diabetes_binary)) + 
+  geom_bar(alpha = 0.75) + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))+
+  scale_fill_manual(values = c("royalblue1", "darkorange1"))+
+  ggtitle("Income Freq (Diabetes / Non-Diabetes)")
+ggsave(path='./graphs',filename = '55_income_both_freq.png', dpi = 300)
+```
+
+__Code__: _R_
+```{r}
+# percent of each factor
+table <- as.data.frame(prop.table(table(data.clean$Income))*100)
+names(table) <- c("Income", "Percent")
+table
+```
+59.92% of respondents had a total household income of greater than $35k with 29.21% of the people surveyed having a household income of greater than $75k.
+
+
+__Code__: _R_
+```{r}
+# creating x tab for python data
+table2 <- xtabs(~ Income + Diabetes_binary, data=data.clean)
+table2 <- as.data.frame(table2)
+data_py <- table2
+
+```
+
+Checking the percentages per group of Diabetic and non diabetic
+
+__Code__: _Python_
+```{python}
+import pandas as pd
+
+df = pd.DataFrame(r.data_py)
+
+# grouping by factor and getting percentages
+df['Percentage'] = ((df['Freq'] / df.groupby(['Income'])['Freq'].transform('sum'))*100).round(2)
+df = df.sort_values('Income', ascending=False)
+df
+
+```
+
+The survey indicates that the lower the household income bracket the higher percentage of people in that bracket with Diabetes.
+
+\newpage
+## Diabetes_binary - Predictor - 2 level factor
+
+This is the dependent (predictor) variable for this analysis. Checking to see if the split is 50/50 between people with and without Diabetes.
+
+### Factor Frequency
+
+The count of each value will be checked, but as this data set was downloaded as a 50/50 dataset between the groups it is expected to see a 50/50 split in the Diabetic versus non-Diabetic people.
+
+__Code__: _R_
+```{r}
+# freq 
+ggplot(data.clean, aes(Diabetes_binary)) +    
+  geom_bar(fill='royalblue1', alpha=0.75)+
+  ggtitle("Diabetes_binary Freq")
+ggsave(path='./graphs',filename = '56_diabetes_freq.png', dpi = 300)
+```
+
+\newpage
+# Data Insights
+
+## Correlation Testing
+
+Correlations between numeric columns as well as chi squared tests of independence can be performed on the data set to see if there is any immediate correlations between columns or any dependence between factors. 
+
+### Numeric Correlations
+
+The correlations between the numeric variables can be tested with pearson correlation coefficient and visualized in a heat map and scatter plots.
+
+__Code__: _R_
+```{r}
+
+# checking correlations of numeric data
+num_cols <- unlist(lapply(data.clean, is.numeric))
+
+
+data_num <- data.clean[ , num_cols] # create Subset for correlation testing
+# create correlation matrix for plotting
+corr.mtrx<-round(cor(data_num),2)
+
+# plot matrix
+ggcorrplot(corr.mtrx, hc.order=TRUE, method ="square", lab=TRUE)+
+  ggtitle("Correlations between numeric variables")
+
+```
+
+There appears to be no correlation between the numeric values in the dataset. MentHlth and PhysHlth have the strongest correlation with a low/medium correlation coefficient of 0.38. 
+
+WE can view these in scatter plots but is expected that due to the nature of the data in the PhysHlth and MentHlth columns where they could be classified as factors, the scatter plots will have no representaion of a correlation.
+
+__Code__: _R_
+```{r}
+
+# Scatter plots for BMI and physhlth
+ggplot(data.clean, aes(x=BMI, y=PhysHlth, colour=Diabetes_binary)) +
+  geom_point()+
+  ggtitle("Scatter Plot of BMI v PhysHlth")+
+  xlab("BMI")+
+  ylab("PhysHlth")
+
+```
+
+__Code__: _R_
+```{r}
+
+# Scatter plots for BMI and menthlth
+ggplot(data.clean, aes(x=BMI, y=MentHlth, colour=Diabetes_binary)) +
+  geom_point()+
+  ggtitle("Scatter Plot of BMI v MentHlth")+
+  xlab("BMI")+
+  ylab("MentHlth")
+
+```
+
+__Code__: _R_
+```{r}
+
+# Scatter plots for physhlth and menthlth
+ggplot(data.clean, aes(x=PhysHlth, y=MentHlth, colour=Diabetes_binary)) +
+  geom_point()+
+  ggtitle("Scatter Plot of PhysHlth v MentHlth")+
+  xlab("PhysHlth")+
+  ylab("MentHlth")
+```
+As expected there is no value in the scatter plot representation of the data. 
+
+
+## Chi tests of Independence (Complete DataFrame)
+
+For the independence tests columns that showed no value in the data exploration will also be removed. Columns for testing will be: HighBP, HighChol, Smoker, Stroke, HeartDiseaseorAttack, PhysActivity, Fruits, Veggies, GenHlth, DiffWalk, Sex, Age, Education and Income. They will all be tested against the Diabetes factor to see if there is any dependence associated. Some columns will also be tested against the Sex column to see if they are dependent there also
+
+
+H0 (p < 0.05): (null hypothesis) The two variables are independent (Diabetes ~ variable tested). 
+H1 (p > 0.05): (alternative hypothesis) The two variables are not independent (Diabetes ~ variable tested). 
+
+
+__Code__: _R_
+```{r}
+# new copy of data
+data.chi <- data.clean 
+
+# changing to factors
+data.chi$PhysHlth <- as.factor(data.chi$PhysHlth)
+data.chi$MentHlth <- as.factor(data.chi$MentHlth)
+
+# selecting columns for the chi tests
+data.chi <- data.chi %>% dplyr::select(Diabetes_binary, HighBP, HighChol, Smoker,
+                                       Stroke, HeartDiseaseorAttack,PhysActivity,Fruits,Veggies, 
+                                       GenHlth,DiffWalk, Sex, Age, Education, Income)
+```
+
+### HighBP
+
+Performing chi tests of independence on HighBP and Diabetes.
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table3 <- xtabs(~HighBP + Diabetes_binary, data=data.chi)
+table3 <- as.table(table3)
+table3
+```
+
+__Code__: _R_
+```{r}
+#Perform Chi-Square Test of Independence
+chisq.test(table3)
+```
+
+
+### HighChol 
+
+Performing chi tests of independence on HighChol and Diabetes.
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table3 <- xtabs(~HighChol + Diabetes_binary, data=data.chi)
+table3 <- as.table(table3)
+table3
+```
+
+__Code__: _R_
+```{r}
+#Perform Chi-Square Test of Independence
+chisq.test(table3)
+```
+
+
+
+### Smoker
+
+Performing chi tests of independence on Smoker and Diabetes.
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table3 <- xtabs(~Smoker + Diabetes_binary, data=data.chi)
+table3 <- as.table(table3)
+table3
+```
+
+__Code__: _R_
+```{r}
+#Perform Chi-Square Test of Independence
+chisq.test(table3)
+```
+
+
+### Stroke
+
+Performing chi tests of independence on Stroke and Diabetes.
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table3 <- xtabs(~Stroke + Diabetes_binary, data=data.chi)
+table3 <- as.table(table3)
+table3
+```
+
+__Code__: _R_
+```{r}
+#Perform Chi-Square Test of Independence
+chisq.test(table3)
+```
+
+### HeartDiseaseorAttack
+
+Performing chi tests of independence on HeartDiseaseorAttack and Diabetes.
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table3 <- xtabs(~HeartDiseaseorAttack + Diabetes_binary, data=data.chi)
+table3 <- as.table(table3)
+table3
+```
+
+__Code__: _R_
+```{r}
+#Perform Chi-Square Test of Independence
+chisq.test(table3)
+```
+
+
+### PhysActivity
+
+Performing chi tests of independence on PhysActivity and Diabetes.
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table3 <- xtabs(~PhysActivity + Diabetes_binary, data=data.chi)
+table3 <- as.table(table3)
+table3
+```
+
+__Code__: _R_
+```{r}
+#Perform Chi-Square Test of Independence
+chisq.test(table3)
+```
+
+
+### Fruits
+
+Performing chi tests of independence on Fruits and Diabetes.
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table3 <- xtabs(~Fruits + Diabetes_binary, data=data.chi)
+table3 <- as.table(table3)
+table3
+```
+
+__Code__: _R_
+```{r}
+#Perform Chi-Square Test of Independence
+chisq.test(table3)
+```
+
+
+### Veggies
+
+Performing chi tests of independence on Veggies and Diabetes.
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table3 <- xtabs(~Veggies + Diabetes_binary, data=data.chi)
+table3 <- as.table(table3)
+table3
+```
+
+__Code__: _R_
+```{r}
+#Perform Chi-Square Test of Independence
+chisq.test(table3)
+```
+
+
+### GenHlth
+
+Performing chi tests of independence on GenHlth and Diabetes.
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table3 <- xtabs(~GenHlth + Diabetes_binary, data=data.chi)
+table3 <- as.table(table3)
+table3
+```
+
+__Code__: _R_
+```{r}
+#Perform Chi-Square Test of Independence
+chisq.test(table3)
+```
+
+
+### DiffWalk
+
+Performing chi tests of independence on DiffWalk and Diabetes.
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table3 <- xtabs(~DiffWalk + Diabetes_binary, data=data.chi)
+table3 <- as.table(table3)
+table3
+```
+
+__Code__: _R_
+```{r}
+#Perform Chi-Square Test of Independence
+chisq.test(table3)
+```
+
+### Sex
+
+Performing chi tests of independence on the Sex and Diabetes.
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table3 <- xtabs(~Sex + Diabetes_binary, data=data.chi)
+table3 <- as.table(table3)
+table3
+```
+
+__Code__: _R_
+```{r}
+#Perform Chi-Square Test of Independence
+chisq.test(table3)
+```
+
+
+### Age
+
+Performing chi tests of independence on Age and Diabetes.
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table3 <- xtabs(~Age + Diabetes_binary, data=data.chi)
+table3 <- as.table(table3)
+table3
+```
+\newpage
+__Code__: _R_
+```{r}
+#Perform Chi-Square Test of Independence
+chisq.test(table3)
+```
+
+
+### Education
+
+Performing chi tests of independence on Education and Diabetes.
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table3 <- xtabs(~Education + Diabetes_binary, data=data.chi)
+table3 <- as.table(table3)
+table3
+```
+
+__Code__: _R_
+```{r}
+#Perform Chi-Square Test of Independence
+chisq.test(table3)
+```
+\newpage
+
+### Income
+
+Performing chi tests of independence on Income and Diabetes.
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table3 <- xtabs(~Income + Diabetes_binary, data=data.chi)
+table3 <- as.table(table3)
+table3
+```
+
+__Code__: _R_
+```{r}
+#Perform Chi-Square Test of Independence
+chisq.test(table3)
+```
+
+All of the chi squared tests returned a p-value of less than the alpha of 0.05, all returned at 2.2e-16 which would indicate the each variable is independent of the diabetes diagnosis. This is possibly due to the size of the population tested and the sensitivity or the test.
+
+
+## Chi test of Independence (Sample of Data)
+
+Because all the values returned p-values of less than 2.2e-16 this could be because our data set is too large. To accommodate for this we can sample the dataset but also keeping the same distribution of all the factors and retest the sampled data to see if we get the same results.
+
+H0 (p < 0.05): (null hypothesis) The two variables are independent (Diabetes ~ variable tested). 
+H1 (p > 0.05): (alternative hypothesis) The two variables are not independent (Diabetes ~ variable tested). 
+
+The sample data set will have to reproduce the same distributions as the population dataset. The below code loops through each of the columns and tests whether the probabilities. For each test, if all the p-values are greater than 0.05, we can say that the sample is not biased and is a valid representation of the greater data set.
+
+__Code__: _R_
+```{r warning=FALSE}
+
+# make a copy of the dataset
+dataset <- data.chi
+
+# set the sample size we want
+sample_size = 353 # 0.5% of original dataset
+
+# set seed for reporducabilty
+set.seed(1)
+
+# parameters for the sample set
+idxs = sample(1:nrow(dataset),sample_size,replace=F)
+
+# create the sample set
+subsample = dataset[idxs,]
+# list for p-values
+pvalues = list()
+
+# loop through the dataset columns and test each column
+# an alpha 0.05 is used and the p-value is used to select the 
+# the corresponding distribution in the sample set
+for (col in names(dataset)) {
+  if (class(dataset[,col]) %in% c("numeric","integer")) {
+    # Numeric variable. Using Kolmogorov-Smirnov test
+    pvalues[[col]] = ks.test(subsample[[col]],dataset[[col]])$p.value
+    
+  } else {
+    # Categorical variable. Using Pearson's Chi-square test
+    probs = table(dataset[[col]])/nrow(dataset)
+    pvalues[[col]] = chisq.test(table(subsample[[col]]),p=probs)$p.value
+    
+  }
+}
+
+pvalues
+```
+All of the p-values are greater than the 0.05 alpha therefore we can say that the sample set reproduces the data set in a smaller scale. The sample data set can now be retested with the chi test of independence. 
+
+
+### HighBP - Sample test
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table4 <- xtabs(~HighBP + Diabetes_binary, data=subsample)
+table4 <- as.table(table4)
+table4
+```
+
+__Code__: _R_
+```{r}
+#Perform Chi-Square Test of Independence
+chisq.test(table4)
+```
+Since the p-value of the test is less than 0.05, we reject the null hypothesis. This means there is sufficient evidence to say that there is a statistical association between Diabetes and the tested variable
+
+\newpage
+### HighChol - Sample test
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table4 <- xtabs(~HighChol + Diabetes_binary, data=subsample)
+table4 <- as.table(table4)
+table4
+```
+
+__Code__: _R_
+```{r}
+#Perform Chi-Square Test of Independence
+chisq.test(table4)
+```
+Since the p-value of the test is less than 0.05, we reject the null hypothesis. This means there is sufficient evidence to say that there is a statistical association between Diabetes and the tested variable
+
+### Smoker - Sample test
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table4 <- xtabs(~Smoker + Diabetes_binary, data=subsample)
+table4 <- as.table(table4)
+table4
+```
+
+__Code__: _R_
+```{r}
+#Perform Chi-Square Test of Independence
+chisq.test(table4)
+```
+Since the p-value of the test is not less than 0.05, we fail to reject the null hypothesis. This means we do not have sufficient evidence to say that there is an association between Diabetes and the tested variable
+
+### Stroke - Sample test
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table4 <- xtabs(~Stroke + Diabetes_binary, data=subsample)
+table4 <- as.table(table4)
+table4
+```
+
+__Code__: _R_
+```{r}
+#Perform Chi-Square Test of Independence
+chisq.test(table4)
+```
+
+Since the p-value of the test is less than 0.05, we reject the null hypothesis. This means there is sufficient evidence to say that there is a statistical association between Diabetes and the tested variable
+
+
+### HeartDiseaseorAttack - Sample test
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table4 <- xtabs(~HeartDiseaseorAttack + Diabetes_binary, data=subsample)
+table4 <- as.table(table4)
+table4
+```
+
+__Code__: _R_
+```{r}
+#Perform Chi-Square Test of Independence
+chisq.test(table4)
+```
+
+Since the p-value of the test is less than 0.05, we reject the null hypothesis. This means there is sufficient evidence to say that there is a statistical association between Diabetes and the tested variable
+
+### PhysActivity - Sample test
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table4 <- xtabs(~PhysActivity + Diabetes_binary, data=subsample)
+table4 <- as.table(table4)
+table4
+```
+
+__Code__: _R_
+```{r}
+#Perform Chi-Square Test of Independence
+chisq.test(table4)
+```
+
+Since the p-value of the test is less than 0.05, we reject the null hypothesis. This means there is sufficient evidence to say that there is a statistical association between Diabetes and the tested variable
+
+
+### Fruits - Sample test
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table4 <- xtabs(~Fruits + Diabetes_binary, data=subsample)
+table4 <- as.table(table4)
+table4
+```
+
+__Code__: _R_
+```{r}
+#Perform Chi-Square Test of Independence
+chisq.test(table4)
+```
+
+Since the p-value of the test is not less than 0.05, we fail to reject the null hypothesis. This means we do not have sufficient evidence to say that there is an association between Diabetes and the tested variable
+
+### Veggies - Sample test
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table4 <- xtabs(~Veggies + Diabetes_binary, data=subsample)
+table4 <- as.table(table4)
+table4
+```
+
+__Code__: _R_
+```{r}
+#Perform Chi-Square Test of Independence
+chisq.test(table4)
+```
+
+Since the p-value of the test is not less than 0.05, we fail to reject the null hypothesis. This means we do not have sufficient evidence to say that there is an association between Diabetes and the tested variable
+
+### GenHlth - Sample test
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table4 <- xtabs(~GenHlth + Diabetes_binary, data=subsample)
+table4 <- as.table(table4)
+table4
+```
+
+__Code__: _R_
+```{r}
+#Perform Chi-Square Test of Independence
+chisq.test(table4)
+```
+
+Since the p-value of the test is less than 0.05, we reject the null hypothesis. This means there is sufficient evidence to say that there is a statistical association between Diabetes and the tested variable
+
+### DiffWalk - Sample test
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table4 <- xtabs(~DiffWalk + Diabetes_binary, data=subsample)
+table4 <- as.table(table4)
+table4
+```
+
+__Code__: _R_
+```{r}
+#Perform Chi-Square Test of Independence
+chisq.test(table4)
+```
+
+Since the p-value of the test is less than 0.05, we reject the null hypothesis. This means there is sufficient evidence to say that there is a statistical association between Diabetes and the tested variable
+
+### Sex - Sample test
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table4 <- xtabs(~Sex + Diabetes_binary, data=subsample)
+table4 <- as.table(table4)
+table4
+```
+
+__Code__: _R_
+```{r}
+#Perform Chi-Square Test of Independence
+chisq.test(table4)
+```
+
+Since the p-value of the test is not less than 0.05, we fail to reject the null hypothesis. This means we do not have sufficient evidence to say that there is an association between Diabetes and the tested variable
+
+### Age - Sample test
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table4 <- xtabs(~Age + Diabetes_binary, data=subsample)
+table4 <- as.table(table4)
+table4
+```
+
+__Code__: _R_
+```{r}
+#Perform Chi-Square Test of Independence
+chisq.test(table4)
+```
+
+Since the p-value of the test is less than 0.05, we reject the null hypothesis. This means there is sufficient evidence to say that there is a statistical association between Diabetes and the tested variable
+
+
+### Education - Sample test
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table4 <- xtabs(~Education + Diabetes_binary, data=subsample)
+table4 <- as.table(table4)
+table4
+```
+
+__Code__: _R_
+```{r}
+#Perform Chi-Square Test of Independence
+chisq.test(table4)
+```
+Since the p-value of the test is not less than 0.05, we fail to reject the null hypothesis. This means we do not have sufficient evidence to say that there is an association between Diabetes and the tested variable
+
+
+### Income - Sample test
+
+__Code__: _R_
+```{r}
+# checking percentages per group 
+table4 <- xtabs(~Income + Diabetes_binary, data=subsample)
+table4 <- as.table(table4)
+table4
+```
+
+__Code__: _R_
+```{r}
+#Perform Chi-Square Test of Independence
+chisq.test(table4)
+```
+
+Since the p-value of the test is not less than 0.05, we fail to reject the null hypothesis. This means we do not have sufficient evidence to say that there is an association between Diabetes and the tested variable
+
+
+### Results
+
+From the sample size created the results are:
+
+
+* HighBP
+
+p-value of 2.708e-09 (REJECT)
+This means we have sufficient evidence to say that there is an association between HighBP and Diabetes
+
+* HighChol
+
+p-value of 6.371e-08 (REJECT)
+This means we have sufficient evidence to say that there is an association between HighBP and Diabetes
+
+* Smoker
+
+p-value of 0.09632 (FAIL to REJECT)
+This means we do not have sufficient evidence to say that there is an association between Smoker and Diabetes
+
+* Stroke
+
+p-value of 0.04521 (REJECT)
+This means we have sufficient evidence to say that there is an association between Stroke and Diabetes
+
+* HeartDiseaseorAttack
+
+p-value of 3.487e-05 (REJECT)
+This means we have sufficient evidence to say that there is an association between HeartDiseaseorAttack and Diabetes
+
+* PhysActivity
+
+p-value of 0.0009368 (REJECT)
+This means we have sufficient evidence to say that there is an association between PhysActivity and Diabetes
+
+* Fruits
+
+p-value of 0.2915 (FAIL to REJECT)
+This means we do not have sufficient evidence to say that there is an association between Fruits and Diabetes
+
+* Veggies
+
+p-value of 0.5875 (FAIL to REJECT)
+This means we do not have sufficient evidence to say that there is an association between Veggies and Diabetes
+
+* GenHlth
+
+p-value of 2.119e-09 (REJECT)
+This means we have sufficient evidence to say that there is an association between GenHlth and Diabetes
+
+* DiffWalk
+
+p-value of 0.0002079 (REJECT)
+This means we have sufficient evidence to say that there is an association between DiffWalk and Diabetes
+
+* Sex
+
+p-value of 0.9304 (FAIL to REJECT)
+This means we do not have sufficient evidence to say that there is an association between Sex and Diabetes
+
+* Age
+
+p-value of 1.064e-05 (REJECT)
+This means we have sufficient evidence to say that there is an association between Age and Diabetes
+
+* Education
+
+p-value of 0.06958 (FAIL to REJECT)
+This means we do not have sufficient evidence to say that there is an association between Education and Diabetes
+
+* Income
+
+p-value of 0.07861 (FAIL to REJECT)
+This means we do not have sufficient evidence to say that there is an association between Income and Diabetes
+
+
+## Chi Squared Test, Goodness of fit (expected / observed)
+
+Where somebody has diabetes we can check the percentages to see of there is any statistical difference in the cohorts that might indicate a higher prevalence in one than the other.
+
+For this test it will be performed on the binary factors (TRUE / FALSE) and (Yes / No) answers to see if they vary statistically from a 50/50 split
+
+For this the non-diabetic people in the survey will be filtered out and only positive diabetic diagnosis will be used.
+
+__Code__: _R_
+```{r}
+# only keeping diabetic people
+data_diabetic <- subset(data.chi, data.chi$Diabetes_binary == 1)
+
+# check factor types and only keep columns with binary factors
+str(data_diabetic)
+
+```
+\newpage
+__Code__: _R_
+```{r}
+
+# selecting columns for the chi tests
+data_diabetic <- data_diabetic %>% dplyr::select(HighBP, HighChol, Smoker,
+                                       Stroke, HeartDiseaseorAttack,PhysActivity,Fruits,Veggies, 
+                                       DiffWalk, Sex)
+
+str(data_diabetic)
+```
+Left with 10 columns to check 
+
+### HighBP
+
+Chi squared test on the percentage that do and don't have high blood pressure when having Diabetes
+
+__Code__: _R_
+```{r}
+# create percentage table for chi squared test
+tbl = table(data_diabetic$HighBP)
+tbl.perc = prop.table(tbl)
+tbl.perc = round(tbl.perc*100,2)
+
+# create observed versus expected
+obs <- as.numeric(tbl.perc)
+obs
+exp <- c(.5, .5)
+
+chisq.test(x = obs, p = exp )
+```
+Since the p-value of the test is less than 0.05, we reject the null hypothesis. This means there is sufficient evidence to say that there is a statistical difference in the people that have Diabetes and the tested variable
+
+
+### HighChol
+
+Chi squared test on the percentage that do and don't have high cholesterol when having Diabetes
+
+__Code__: _R_
+```{r}
+# create percentage table for chi squared test
+tbl = table(data_diabetic$HighChol)
+tbl.perc = prop.table(tbl)
+tbl.perc = round(tbl.perc*100,2)
+
+# create observed versus expected
+obs <- as.numeric(tbl.perc)
+obs
+exp <- c(.5, .5)
+
+chisq.test(x = obs, p = exp )
+```
+
+Since the p-value of the test is less than 0.05, we reject the null hypothesis. This means there is sufficient evidence to say that there is a statistical difference in the people that have Diabetes and the tested variable
+
+### Smoker
+
+Chi squared test on the percentage that do and don't smoke when having Diabetes
+
+__Code__: _R_
+```{r}
+# create percentage table for chi squared test
+tbl = table(data_diabetic$Smoker)
+tbl.perc = prop.table(tbl)
+tbl.perc = round(tbl.perc*100,2)
+
+# create observed versus expected
+obs <- as.numeric(tbl.perc)
+obs
+exp <- c(.5, .5)
+
+chisq.test(x = obs, p = exp )
+```
+Since the p-value of the test is not less than 0.05, we fail to reject the null hypothesis. This means we do not have sufficient evidence to say that there is a statistical difference in the people that have Diabetes and the tested variable
+
+### Stroke
+
+Chi squared test on the percentage that did and didn't have a stroke while having Diabetes
+
+__Code__: _R_
+```{r}
+# create percentage table for chi squared test
+tbl = table(data_diabetic$Stroke)
+tbl.perc = prop.table(tbl)
+tbl.perc = round(tbl.perc*100,2)
+
+# create observed versus expected
+obs <- as.numeric(tbl.perc)
+obs
+exp <- c(.5, .5)
+
+chisq.test(x = obs, p = exp )
+```
+
+Since the p-value of the test is less than 0.05, we reject the null hypothesis. This means there is sufficient evidence to say that there is a statistical difference in the people that have Diabetes and the tested variable
+
+
+### HeartDiseaseorAttack
+
+Chi squared test on the percentage that did and didn't have a diagnosis of some kind of heart disease while having Diabetes
+
+__Code__: _R_
+```{r}
+# create percentage table for chi squared test
+tbl = table(data_diabetic$HeartDiseaseorAttack)
+tbl.perc = prop.table(tbl)
+tbl.perc = round(tbl.perc*100,2)
+
+# create observed versus expected
+obs <- as.numeric(tbl.perc)
+obs
+exp <- c(.5, .5)
+
+chisq.test(x = obs, p = exp )
+```
+Since the p-value of the test is less than 0.05, we reject the null hypothesis. This means there is sufficient evidence to say that there is a statistical difference in the people that have Diabetes and the tested variablee
+
+
+### PhysActivity
+
+Chi squared test on the percentage that did and didn't report doing a physical activity in the last 30 days while having Diabetes
+
+__Code__: _R_
+```{r}
+# create percentage table for chi squared test
+tbl = table(data_diabetic$PhysActivity)
+tbl.perc = prop.table(tbl)
+tbl.perc = round(tbl.perc*100,2)
+
+# create observed versus expected
+obs <- as.numeric(tbl.perc)
+obs
+exp <- c(.5, .5)
+
+chisq.test(x = obs, p = exp )
+```
+Since the p-value of the test is less than 0.05, we reject the null hypothesis. This means there is sufficient evidence to say that there is a statistical difference in the people that have Diabetes and the tested variable
+
+### Fruits
+
+Chi squared test on the percentage that did and didn't report eating at least one Fruit a day while having Diabetes
+
+__Code__: _R_
+```{r}
+# create percentage table for chi squared test
+tbl = table(data_diabetic$Fruits)
+tbl.perc = prop.table(tbl)
+tbl.perc = round(tbl.perc*100,2)
+
+# create observed versus expected
+obs <- as.numeric(tbl.perc)
+obs
+exp <- c(.5, .5)
+
+chisq.test(x = obs, p = exp )
+```
+
+Since the p-value of the test is not less than 0.05, we fail to reject the null hypothesis. This means we do not have sufficient evidence to say that there is a statistical difference in the people that have Diabetes and the tested variable
+
+### Veggies
+
+Chi squared test on the percentage that did and didn't report eating at least one vegetable a day while having Diabetes
+
+__Code__: _R_
+```{r}
+# create percentage table for chi squared test
+tbl = table(data_diabetic$Veggies)
+tbl.perc = prop.table(tbl)
+tbl.perc = round(tbl.perc*100,2)
+
+# create observed versus expected
+obs <- as.numeric(tbl.perc)
+obs
+exp <- c(.5, .5)
+
+chisq.test(x = obs, p = exp )
+```
+Since the p-value of the test is less than 0.05, we reject the null hypothesis. This means there is sufficient evidence to say that there is a statistical difference in the people that have Diabetes and the tested variable
+
+
+### DiffWalk
+
+Chi squared test on the percentage that did and didn't report having serious difficulty walking or climbing stairs while having Diabetes
+
+__Code__: _R_
+```{r}
+# create percentage table for chi squared test
+tbl = table(data_diabetic$DiffWalk)
+tbl.perc = prop.table(tbl)
+tbl.perc = round(tbl.perc*100,2)
+
+# create observed versus expected
+obs <- as.numeric(tbl.perc)
+exp <- c(.5, .5)
+
+chisq.test(x = obs, p = exp )
+```
+Since the p-value of the test is less than 0.05, we reject the null hypothesis. This means there is sufficient evidence to say that there is a statistical difference in the people that have Diabetes and the tested variable
+
+
+### Sex
+
+Chi squared test on the percentage that are Male versus Female while having Diabetes
+
+__Code__: _R_
+```{r}
+# create percentage table for chi squared test
+tbl = table(data_diabetic$Sex)
+tbl.perc = prop.table(tbl)
+tbl.perc = round(tbl.perc*100,2)
+
+# create observed versus expected
+obs <- as.numeric(tbl.perc)
+obs
+exp <- c(.5, .5)
+
+chisq.test(x = obs, p = exp )
+```
+
+Since the p-value of the test is not less than 0.05, we fail to reject the null hypothesis. This means we do not have sufficient evidence to say that there is a statistical difference in the people that have Diabetes and the tested variable
+
+
+### Results
+
+From the chi squared goodness of fit test against people who do have diabetes and the observed percentage in that group with a particular ailment.
+
+
+* HighBP
+
+p-value of 4.327e-07 (REJECT)
+
+This means that in the number of people who have diabetes, HighBP does not follow a hypothesized distribution of 50:50.
+
+* HighChol
+
+p-value of 0.0006689 (REJECT)
+This means that in the number of people who have diabetes, HighChol does not follow a hypothesized distribution of 50:50.
+
+* Smoker
+
+p-value of 0.7159 (FAIL to REJECT)
+This means that in the number of people who have diabetes, Smoker does approx. follow a hypothesized distribution of 50:50.
+
+* Stroke
+
+p-value of 3.639e-16 (REJECT)
+This means that in the number of people who have diabetes, Stroke does not follow a hypothesized distribution of 50:50.
+
+* HeartDiseaseorAttack
+
+p-value of 2.99e-08 (REJECT)
+This means that in the number of people who have diabetes, HeartDiseaseorAttack does not follow a hypothesized distribution of 50:50.
+
+* PhysActivity
+
+p-value of 0.009054 (REJECT)
+This means that in the number of people who have diabetes, PhysActivity does not follow a hypothesized distribution of 50:50.
+
+* Fruits
+
+p-value of 0.08764 (FAIL to REJECT)
+This means that in the number of people who have diabetes, Fruits does approx. follow a hypothesized distribution of 50:50
+
+* Veggies
+
+p-value of 2.928e-07 (REJECT)
+This means that in the number of people who have diabetes, Veggies does not follow a hypothesized distribution of 50:50.
+
+* DiffWalk
+
+p-value of 0.009995 (REJECT)
+This means that in the number of people who have diabetes, DiffWalk does not follow a hypothesized distribution of 50:50.
+
+* Sex
+
+p-value of 0.6759 (FAIL to REJECT)
+This means that in the number of people who have diabetes, Sex does approx. follow a hypothesized distribution of 50:50
+
+
+## Chi squared test (Goodness of Fit) - Part 2
+
+For these tests, it will be tested the number of males and females in the survey with or without diabetes, people with high blood pressure, high cholesterol, low physical activity, difficulty waling, and have had a stroke or heart disease.
+
+### Males
+
+__Code__: _R_
+```{r}
+# only keeping males
+data.chi.test <- subset(data.chi, data.chi$Sex == 'Male')
+
+# selecting columns for the chi tests
+data.chi.test <- data.chi.test %>% dplyr::select(Diabetes_binary)
+
+tbl.chi <- table(data.chi.test)
+
+tbl.perc.chi = prop.table(tbl.chi)
+tbl.perc.chi = round(tbl.perc.chi*100,2)
+tbl.perc.chi
+
+# create observed versus expected
+obs <- as.numeric(tbl.perc.chi)
+exp <- c(.5, .5)
+
+chisq.test(x = obs, p = exp )
+
+```
+Since the p-value of the test is not less than 0.05, we fail to reject the null hypothesis. This means we do not have sufficient evidence to say that there is a statistical difference in the people that have or have not got Diabetes and the tested variable
+
+### Females
+
+__Code__: _R_
+```{r}
+# only keeping males
+data.chi.test <- subset(data.chi, data.chi$Sex == 'Female')
+
+# selecting columns for the chi tests
+data.chi.test <- data.chi.test %>% dplyr::select(Diabetes_binary)
+
+tbl.chi <- table(data.chi.test)
+
+tbl.perc.chi = prop.table(tbl.chi)
+tbl.perc.chi = round(tbl.perc.chi*100,2)
+tbl.perc.chi
+
+# create observed versus expected
+obs <- as.numeric(tbl.perc.chi)
+exp <- c(.5, .5)
+
+chisq.test(x = obs, p = exp )
+
+```
+Since the p-value of the test is not less than 0.05, we fail to reject the null hypothesis. This means we do not have sufficient evidence to say that there is a statistical difference in the people that have or have not got Diabetes and the tested variable
+
+### High Blood Pressure
+
+__Code__: _R_
+```{r}
+# only keeping males
+data.chi.test <- subset(data.chi, data.chi$HighBP == TRUE)
+
+# selecting columns for the chi tests
+data.chi.test <- data.chi.test %>% dplyr::select(Diabetes_binary)
+
+tbl.chi <- table(data.chi.test)
+
+tbl.perc.chi = prop.table(tbl.chi)
+tbl.perc.chi = round(tbl.perc.chi*100,2)
+tbl.perc.chi
+
+# create observed versus expected
+obs <- as.numeric(tbl.perc.chi)
+exp <- c(.5, .5)
+
+chisq.test(x = obs, p = exp )
+
+```
+Since the p-value of the test is less than 0.05, we reject the null hypothesis. This means there is sufficient evidence to say that there is a statistical difference in the people that have or have not got Diabetes and the tested variable
+
+### High Cholesterol
+
+__Code__: _R_
+```{r}
+# only keeping males
+data.chi.test <- subset(data.chi, data.chi$HighChol == TRUE)
+
+# selecting columns for the chi tests
+data.chi.test <- data.chi.test %>% dplyr::select(Diabetes_binary)
+
+tbl.chi <- table(data.chi.test)
+
+tbl.perc.chi = prop.table(tbl.chi)
+tbl.perc.chi = round(tbl.perc.chi*100,2)
+tbl.perc.chi
+
+# create observed versus expected
+obs <- as.numeric(tbl.perc.chi)
+exp <- c(.5, .5)
+
+chisq.test(x = obs, p = exp )
+
+```
+
+Since the p-value of the test is less than 0.05, we reject the null hypothesis. This means there is sufficient evidence to say that there is a statistical difference in the people that have or have not got Diabetes and the tested variable
+
+
+### Low Physical Activity
+
+__Code__: _R_
+```{r}
+# only keeping males
+data.chi.test <- subset(data.chi, data.chi$PhysActivity == FALSE)
+
+# selecting columns for the chi tests
+data.chi.test <- data.chi.test %>% dplyr::select(Diabetes_binary)
+
+tbl.chi <- table(data.chi.test)
+
+tbl.perc.chi = prop.table(tbl.chi)
+tbl.perc.chi = round(tbl.perc.chi*100,2)
+tbl.perc.chi
+
+# create observed versus expected
+obs <- as.numeric(tbl.perc.chi)
+exp <- c(.5, .5)
+
+chisq.test(x = obs, p = exp )
+
+```
+
+Since the p-value of the test is less than 0.05, we reject the null hypothesis. This means there is sufficient evidence to say that there is a statistical difference in the people that have or have not got Diabetes and the tested variable
+
+\newpage
+### Difficulty Walking
+
+__Code__: _R_
+```{r}
+# only keeping males
+data.chi.test <- subset(data.chi, data.chi$DiffWalk == 'Yes')
+
+# selecting columns for the chi tests
+data.chi.test <- data.chi.test %>% dplyr::select(Diabetes_binary)
+
+tbl.chi <- table(data.chi.test)
+
+tbl.perc.chi = prop.table(tbl.chi)
+tbl.perc.chi = round(tbl.perc.chi*100,2)
+tbl.perc.chi
+
+# create observed versus expected
+obs <- as.numeric(tbl.perc.chi)
+exp <- c(.5, .5)
+
+chisq.test(x = obs, p = exp )
+
+```
+
+Since the p-value of the test is less than 0.05, we reject the null hypothesis. This means there is sufficient evidence to say that there is a statistical difference in the people that have or have not got Diabetes and the tested variable
+
+
+### Had a Stroke
+
+__Code__: _R_
+```{r}
+# only keeping males
+data.chi.test <- subset(data.chi, data.chi$Stroke == 'Yes')
+
+# selecting columns for the chi tests
+data.chi.test <- data.chi.test %>% dplyr::select(Diabetes_binary)
+
+tbl.chi <- table(data.chi.test)
+
+tbl.perc.chi = prop.table(tbl.chi)
+tbl.perc.chi = round(tbl.perc.chi*100,2)
+tbl.perc.chi
+
+# create observed versus expected
+obs <- as.numeric(tbl.perc.chi)
+exp <- c(.5, .5)
+
+chisq.test(x = obs, p = exp )
+
+```
+
+Since the p-value of the test is less than 0.05, we reject the null hypothesis. This means there is sufficient evidence to say that there is a statistical difference in the people that have or have not got Diabetes and the tested variable
+
+
+### Had/Have Heart Disease
+
+__Code__: _R_
+```{r}
+# only keeping males
+data.chi.test <- subset(data.chi, data.chi$HeartDiseaseorAttack == 'Yes')
+
+# selecting columns for the chi tests
+data.chi.test <- data.chi.test %>% dplyr::select(Diabetes_binary)
+
+tbl.chi <- table(data.chi.test)
+
+tbl.perc.chi = prop.table(tbl.chi)
+tbl.perc.chi = round(tbl.perc.chi*100,2)
+tbl.perc.chi
+
+# create observed versus expected
+obs <- as.numeric(tbl.perc.chi)
+exp <- c(.5, .5)
+
+chisq.test(x = obs, p = exp )
+
+```
+
+Since the p-value of the test is less than 0.05, we reject the null hypothesis. This means there is sufficient evidence to say that there is a statistical difference in the people that have or have not got Diabetes and the tested variable
+\newpage
+
+### Results
+
+From the chi squared goodness of fit test against people who do and do not have diabetes in a particular group. 
+
+
+* Males
+
+p-value of 0.6284 (FAIL to REJECT)
+
+This means that in the number of Males, Diabetes does approx. follow a hypothesized distribution of 50:50.
+
+* Females
+
+p-value of 0.6833 (FAIL to REJECT)
+
+This means that in the number of Females, Diabetes does approx. follow a hypothesized distribution of 50:50.
+
+* High Blood Pressure
+
+p-value of 0.0007851 (REJECT)
+This means that in the number of people with High Blood Pressure, Diabetes does not follow a hypothesized distribution of 50:50.
+
+* High Cholesterol
+
+p-value of 0.005996 (REJECT)
+This means that in the number of people who have High Cholesterol, Diabetes does not follow a hypothesized distribution of 50:50.
+
+* Low Physical Activity
+
+p-value of 0.01461 (REJECT)
+This means that in the number of people who reported Low Physical Activity, Diabetes does not follow a hypothesized distribution of 50:50.
+
+* Difficulty Walking
+
+p-value of 2.759e-06 (REJECT)
+This means that in the number of people who reported difficulty walking, Diabetes does not follow a hypothesized distribution of 50:50.
+
+* Had a Stroke
+
+p-value of 1.105e-06 (REJECT)
+This means that in the number of people who have had a stroke, Diabetes does not approx. follow a hypothesized distribution of 50:50
+
+* Had/Have Heart Disease
+
+p-value of 3.814e-07 (REJECT)
+This means that in the number of people who have some type of reported heart disease, Diabetes does not follow a hypothesized distribution of 50:50.
+
+\newpage
+
+# Modeling
+
+## Logistic Regression
+
+The data has a binomial predictor so logistic regression can be used to attempt to predict the presence of Diabetes in people. The regression will be run in a few different models and the tested for accuracy, specificity. miss-classification error and ROC. 
+
+### Preparing Data for Logistic Regression
+
+Some of the columns will not be used for the regression as they do not provide any additional information, such as __CholCheck__, __HvyAlcoholConsump__, __NoDocbcCost__ and __AnyHealcare__ as almost all of the surveyed people answered one way on each of these
+
+__Code__: _R_
+```{r}
+# freq
+ggplot(data.clean, aes(CholCheck)) +    
+  geom_bar(fill='royalblue1', alpha = 0.75)+
+  ggtitle("CholCheck Freq")
+
+# freq
+ggplot(data.clean, aes(HvyAlcoholConsump)) +    
+  geom_bar(fill='royalblue1', alpha = 0.75)+
+  ggtitle("HvyAlcoholConsump Freq")
+
+# freq
+ggplot(data.clean, aes(AnyHealthcare)) +    
+  geom_bar(fill='royalblue1', alpha = 0.75)+
+  ggtitle("AnyHealcare Freq")
+
+# freq
+ggplot(data.clean, aes(NoDocbcCost)) +    
+  geom_bar(fill='royalblue1', alpha = 0.75)+
+  ggtitle("NoDocbcCost Freq")
+
+```
+
+Selecting the columns that will be used for regression testing
+
+__Code__: _R_
+```{r}
+# remove some columns with excess factor types of model
+data.reg <- data.clean %>% dplyr::select(Diabetes_binary, HighBP, HighChol, BMI,
+                                        Smoker, Stroke, HeartDiseaseorAttack, PhysActivity, 
+                                        Fruits, Veggies, GenHlth, MentHlth, PhysHlth, DiffWalk,
+                                        Sex, Age, Education, Income )
+
+str(data.reg)
+
+```
+\newpage
+Creating a training and test set for the model, 80% will be used for testing and 20% will be the training set
+
+__Code__: _R_
+```{r}
+#Use 70% of data set as training set and remaining 30% as testing set
+sample <- sample(c(TRUE, FALSE), nrow(data.reg), replace=TRUE, prob=c(0.8,0.2))
+train <- data.reg[sample, ]
+test <- data.reg[!sample, ]
+
+```
+
+Check that the training and test sets have each of the factors included
+
+__Code__: _R_
+```{r}
+#summary of training set
+summary(train)
+
+```
+\newpage
+__Code__: _R_
+```{r}
+#summary of test set
+summary(test)
+
+```
+
+The data in each set appears to have all factors in each row accounted for.
+
+\newpage
+
+### Logistic Regression Model 1
+
+For the initial model all the columns will be used. It can then be refined in subsequent models using the columns that have the highest impact on the model.
+
+__Code__: _R_
+```{r}
+# fit the model initially with all variables
+log.mod1 <- glm(Diabetes_binary ~ ., data=train, 
+                   family='binomial')
+
+# view summary
+summary(log.mod1)
+
+
+```
+Plot the residuals to see
+
+__Code__: _R_
+```{r}
+# plotting the results
+plot(log.mod1)
+```
+
+View the McFadden Pseudo R^2 Score
+
+__Code__: _R_
+```{r}
+# McFadden R2 Score
+pscl::pR2(log.mod1)["McFadden"]
+
+```
+
+Graph the predictions in the training set.
+
+__Code__: _R_
+```{r}
+# load predictions to dataframe
+pred.data.log1 <- data.frame(
+  prob.of.diabetes = log.mod1$fitted.values,
+  diabetes = train$Diabetes_binary)
+
+# sort predictions
+pred.data.log1 <- pred.data.log1[order(pred.data.log1$prob.of.diabetes, decreasing = FALSE),]
+
+# add rank
+pred.data.log1$rank <- 1:nrow(pred.data.log1)
+
+# graph the results
+ggplot(data=pred.data.log1, aes(x=rank, y=prob.of.diabetes))+
+  geom_point(aes(color=diabetes), alpha=0.5, shape =1, stroke =2) +
+  xlab("Index") +
+  ylab("Prediction")+
+  ggtitle("Predicted prob of Diabetes based on all vars")
+
+#ggsave('LogReg_all_Vars.png', plot16, path = './graphs/')
+
+```
+
+Next, predictions can be made on the test set and an optimal cut off point found
+
+__Code__: _R_
+```{r}
+# make predictions
+log.mod1.pred <- predict(log.mod1, test, type="response")
+
+#find optimal cutoff probability to use to maximize accuracy
+optimal <- optimalCutoff(test$Diabetes_binary, log.mod1.pred)[1]
+optimal
+
+
+```
+Create a confusion Matrix
+__Code__: _R_
+```{r}
+# create confusion matrix of results
+InformationValue::confusionMatrix(test$Diabetes_binary,log.mod1.pred)
+
+```
+
+Get the models sensitivity, specificity and miss-classification error rate
+
+__Code__: _R_
+```{r}
+#calculate sensitivity
+s <- InformationValue::sensitivity(test$Diabetes_binary,log.mod1.pred)
+
+#calculate specificity
+sp <- InformationValue::specificity(test$Diabetes_binary,log.mod1.pred)
+
+#calculate total misclassification error rate
+me <- InformationValue::misClassError(test$Diabetes_binary,log.mod1.pred, threshold=optimal)
+
+sprintf("The sensitivity of the model: %f", s)
+sprintf("The specificity of the model: %f", sp)
+sprintf("The total misclassification error rate of the model: %f", me)
+
+```
+Plot the ROC curve for final evaluation of the model, the graph displays the percentage of true positives predicted by the model as the prediction probability cutoff is lowered from 1 to 0. The higher the AUC (area under the curve), the more accurately our model is able to predict outcomes
+
+__Code__: _R_
+```{r}
+# plot the ROC Curve of the model
+plotROC(test$Diabetes_binary,log.mod1.pred)
+
+```
+
+Looking at the variable importance and the VIF values of the model to get a better understanding of what is happening in the model.
+
+__Code__: _R_
+```{r}
+# variable importance
+caret::varImp(log.mod1)
+
+```
+
+__Code__: _R_
+```{r}
+# vif values
+car::vif(log.mod1)
+
+```
+Since none of the predictor variables in our models have a VIF over 5, we can assume that multicollinearity is not an issue in our model.
+
+
+### Logistic Regression Model 2
+
+For the initial model all the columns were used. For this model the columns with the highest importance will be used to see if there are any improvements in the model.
+
+__Code__: _R_
+```{r}
+# fit the model initially with all high importance columns
+log.mod2 <- glm(Diabetes_binary ~ HighBP + HighChol +	BMI	+	
+                  Smoker + Stroke +	HeartDiseaseorAttack + 
+                  GenHlth + Sex + Age, 
+                data=train, 
+                family='binomial')
+
+# view summary
+summary(log.mod2)
+
+
+```
+Plot the residuals to see
+
+__Code__: _R_
+```{r}
+# plotting the results
+plot(log.mod2)
+```
+\newpage
+View the McFadden Pseudo R^2 Score
+
+__Code__: _R_
+```{r}
+# McFadden R2 Score
+pscl::pR2(log.mod2)["McFadden"]
+
+```
+
+Graph the predictions in the training set.
+
+__Code__: _R_
+```{r}
+# load predictions to dataframe
+pred.data.log2 <- data.frame(
+  prob.of.diabetes = log.mod2$fitted.values,
+  diabetes = train$Diabetes_binary)
+
+# sort predictions
+pred.data.log2 <- pred.data.log2[order(pred.data.log2$prob.of.diabetes, decreasing = FALSE),]
+
+# add rank
+pred.data.log2$rank <- 1:nrow(pred.data.log2)
+
+# graph the results
+ggplot(data=pred.data.log2, aes(x=rank, y=prob.of.diabetes))+
+  geom_point(aes(color=diabetes), alpha=0.5, shape =1, stroke =2) +
+  xlab("Index") +
+  ylab("Prediction")+
+  ggtitle("Predicted prob of Diabetes based on High Importance Factors")
+
+#ggsave('LogReg_all_Vars.png', plot16, path = './graphs/')
+
+```
+
+Next, predictions can be made on the test set and an optimal cut off point found
+
+__Code__: _R_
+```{r}
+# make predictions
+log.mod2.pred <- predict(log.mod2, test, type="response")
+
+
+#find optimal cutoff probability to use to maximize accuracy
+optimal <- optimalCutoff(test$Diabetes_binary, log.mod2.pred)[1]
+optimal
+
+
+```
+Create a confusion Matrix
+
+__Code__: _R_
+```{r}
+# create confusion matrix of results
+InformationValue::confusionMatrix(test$Diabetes_binary,log.mod2.pred)
+
+```
+
+Get the models sensitivity, specificity and miss-classification error rate
+
+__Code__: _R_
+```{r warning=FALSE}
+#calculate sensitivity
+s <- InformationValue::sensitivity(test$Diabetes_binary,log.mod2.pred)
+
+#calculate specificity
+sp <- InformationValue::specificity(test$Diabetes_binary,log.mod2.pred)
+
+#calculate total misclassification error rate
+me <- InformationValue::misClassError(test$Diabetes_binary,log.mod2.pred, threshold=optimal)
+
+sprintf("The sensitivity of the model: %f", s)
+sprintf("The specificity of the model: %f", sp)
+sprintf("The total misclassification error rate of the model: %f", me)
+
+```
+\newpage
+
+Plot the ROC curve for final evaluation of the model, the graph displays the percentage of true positives predicted by the model as the prediction probability cutoff is lowered from 1 to 0. The higher the AUC (area under the curve), the more accurately our model is able to predict outcomes
+
+__Code__: _R_
+```{r}
+# plot the ROC Curve of the model
+plotROC(test$Diabetes_binary,log.mod2.pred)
+
+```
+Looking at the variable importance and the VIF values of the model to get a better understanding of what is happening in the model.
+
+__Code__: _R_
+```{r}
+# variable importance
+caret::varImp(log.mod2)
+
+```
+
+__Code__: _R_
+```{r}
+# vif values
+car::vif(log.mod2)
+
+```
+
+Since none of the predictor variables in our models have a VIF over 5, we can assume that multicollinearity is not an issue in our model.
+
+
+### Logistic Regression Model 3
+
+For the initial model all the columns were used. For the second model all the columns with the highest importance were used to see if there are any improvements in the model, there was a decline in the performance. Now a subset of the highest importance columns will be used. __HighBP__, __HighChol__, __HeartDiseaseorAttack__, __Veggies__, __MenthHlth__, __DiffWalk__, __Sex__, __Age__ , __Education__, __Income__, and __GenHlth__
+
+
+__Code__: _R_
+```{r}
+# fit the model initially with all high importance columns
+log.mod3 <- glm(Diabetes_binary ~ HighBP + HighChol + HeartDiseaseorAttack +
+                  Veggies + GenHlth + MentHlth + DiffWalk + Sex +  
+                  Age + Income + BMI + Education + Income, 
+                data=train, 
+                family='binomial')
+
+# view summary
+summary(log.mod3)
+
+
+```
+\newpage
+Plot the residuals to see
+
+__Code__: _R_
+```{r}
+# plotting the results
+plot(log.mod3)
+```
+
+View the McFadden Pseudo R^2 Score
+
+__Code__: _R_
+```{r}
+# McFadden R2 Score
+pscl::pR2(log.mod3)["McFadden"]
+
+```
+\newpage
+Graph the predictions in the training set.
+
+__Code__: _R_
+```{r}
+# load predictions to dataframe
+pred.data.log3 <- data.frame(
+  prob.of.diabetes = log.mod3$fitted.values,
+  diabetes = train$Diabetes_binary)
+
+# sort predictions
+pred.data.log3 <- pred.data.log3[order(pred.data.log3$prob.of.diabetes, decreasing = FALSE),]
+
+# add rank
+pred.data.log3$rank <- 1:nrow(pred.data.log3)
+
+# graph the results
+ggplot(data=pred.data.log3, aes(x=rank, y=prob.of.diabetes))+
+  geom_point(aes(color=diabetes), alpha=0.5, shape =1, stroke =2) +
+  xlab("Index") +
+  ylab("Prediction")+
+  ggtitle("Predicted prob of Diabetes based on Highest Importance Factors")
+
+#ggsave('LogReg_all_Vars.png', plot16, path = './graphs/')
+
+```
+
+
+Next, predictions can be made on the test set and an optimal cut off point found
+
+__Code__: _R_
+```{r}
+# make predictions
+log.mod3.pred <- predict(log.mod3, test, type="response")
+
+
+#find optimal cutoff probability to use to maximize accuracy
+optimal <- optimalCutoff(test$Diabetes_binary, log.mod3.pred)[1]
+optimal
+
+
+```
+
+Create a confusion Matrix
+
+__Code__: _R_
+```{r}
+# create confusion matrix of results
+InformationValue::confusionMatrix(test$Diabetes_binary,log.mod3.pred)
+
+```
+
+Get the models sensitivity, specificity and miss-classification error rate
+
+__Code__: _R_
+```{r warning=FALSE}
+#calculate sensitivity
+s <- InformationValue::sensitivity(test$Diabetes_binary,log.mod3.pred)
+
+#calculate specificity
+sp <- InformationValue::specificity(test$Diabetes_binary,log.mod3.pred)
+
+#calculate total misclassification error rate
+me <- InformationValue::misClassError(test$Diabetes_binary,log.mod3.pred, threshold=optimal)
+
+sprintf("The sensitivity of the model: %f", s)
+sprintf("The specificity of the model: %f", sp)
+sprintf("The total misclassification error rate of the model: %f", me)
+
+```
+
+Plot the ROC curve for final evaluation of the model, the graph displays the percentage of true positives predicted by the model as the prediction probability cutoff is lowered from 1 to 0. The higher the AUC (area under the curve), the more accurately our model is able to predict outcomes
+
+
+__Code__: _R_
+```{r}
+# plot the ROC Curve of the model
+plotROC(test$Diabetes_binary,log.mod2.pred)
+
+```
+
+Best model from logistic regression is the first model that uses all the variables in the dataset to make a prediction.
+The overall AUROC score for the best model is: 0.8202 or 82.02% 
+\newpage
+
+## Random Forest
+
+Random Forest can be used to attempt to predict the presence of Diabetes in people. The random forest will be run in a default state with no parameters to begin with, then an attempt to tune the model will be performed and the tested for accuracy, specificity. miss-classification error and ROC.
+
+The same training and test sets created for the logistic regression model can be used in this model while using the factors in their original state.
+
+__Code__: _R_
+```{r}
+# fir the random forest model
+rf_model <- randomForest(formula = Diabetes_binary~.,data=train)
+
+# output the model
+rf_model
+```
+The rf used a classification type with 500 trees using a 4 random variables at each point
+
+__Code__: _R_
+```{r}
+# plot the model
+plot(rf_model)
+#varImpPlot(fit.rf)
+```
+
+The graph shows that after approx 100 trees the error rate only shows minor decline
+
+__Code__: _R_
+```{r fig.height=4, fig.width=8}
+# plot the variabel importance in the model
+varImpPlot(rf_model)
+```
+The graph shows that BMI, AGE, GenHlth, Income and HighBP have the highest weighting on the model.
+
+__Code__: _R_
+```{r}
+model_tuned <- tuneRF(
+               x=train[c('BMI', 'Age', 'GenHlth','Income', 'HighBP')], #define predictor variables
+               y=train$Diabetes_binary, #define response variable
+               ntreeTry=500,
+               mtryStart=4, 
+               stepFactor=1.5,
+               improve=0.01,
+               trace=FALSE #don't show real-time progress
+               )
+
+
+```
+
+The graph shows that the nest OOB is achieved with 2 random features as per the default.
+
+
+__Code__: _R_
+```{r}
+
+rf_pred <- predict(rf_model,newdata=test,type="prob")[,2]
+
+#find optimal cutoff probability to use to maximize accuracy
+optimal <- optimalCutoff(test$Diabetes_binary, rf_pred)[1]
+optimal
+```
+__Code__: _R_
+```{r}
+#calculate sensitivity
+s <- InformationValue::sensitivity(test$Diabetes_binary,rf_pred)
+
+#calculate specificity
+sp <- InformationValue::specificity(test$Diabetes_binary,rf_pred)
+
+#calculate total misclassification error rate
+me <- InformationValue::misClassError(test$Diabetes_binary,rf_pred, threshold=optimal)
+
+sprintf("The sensitivity of the model: %f", s)
+sprintf("The specificity of the model: %f", sp)
+sprintf("The total misclassification error rate of the model: %f", me)
+
+```
+
+__Code__: _R_
+```{r}
+# plot the ROC Curve of the model
+plotROC(test$Diabetes_binary,rf_pred)
+
+```
+
+The tuned random forest model returned an overall AUROC score for the tuned model is: 0.8128 or 81.28% 
+\newpage
+
+
+## KNN
+
+K-Nearest Neighbor will be tested as a possible model for predicting the classification of diabetes in a person.
+A new data will be copied from the original but using the same columns as the previous models. the original dat set is used as numeric values are needed for the algorithm. As most of the numeric values are 1 and 0 they will be tested both scaled and not scaled versions to see which best applies to the model.
+
+__Code__: _R_
+```{r}
+# copy of data 
+knn_data <- data
+
+# remove some columns with excess factor types of model
+knn_data <- knn_data %>% dplyr::select(Diabetes_binary, HighBP, HighChol, BMI,
+                                        Smoker, Stroke, HeartDiseaseorAttack, PhysActivity, 
+                                        Fruits, Veggies, GenHlth, MentHlth, PhysHlth, DiffWalk,
+                                        Sex, Age, Education, Income )
+
+# change factor
+knn_data$Diabetes_binary <- as.factor(knn_data$Diabetes_binary)
+
+# check data types
+str(knn_data)
+
+```
+The below function is used to down sample version of the data set, exact same approach as with the chi-squared tests previous. 
+
+__Code__: _R_
+```{r warning=FALSE}
+
+# make a copy of the dataset
+samp_data <- knn_data
+
+# set the sample size we want
+sample_size = 20000 # 
+
+# set seed for reporducabilty
+set.seed(1)
+
+# parameters for the sample set
+idxs = sample(1:nrow(samp_data),sample_size,replace=F)
+
+# create the sample set
+subsample = samp_data[idxs,]
+# list for p-values
+pvalues = list()
+
+# loop through the dataset columns and test each column
+# an alpha 0.05 is used and the p-value is used to select the 
+# the corresponding distribution in the sample set
+for (col in names(samp_data)) {
+  if (class(samp_data[,col]) %in% c("numeric","integer")) {
+    # Numeric variable. Using Kolmogorov-Smirnov test
+    pvalues[[col]] = ks.test(samp_data[[col]],samp_data[[col]])$p.value
+    
+  } else {
+    # Categorical variable. Using Pearson's Chi-square test
+    probs = table(samp_data[[col]])/nrow(samp_data)
+    pvalues[[col]] = chisq.test(table(subsample[[col]]),p=probs)$p.value
+    
+  }
+}
+
+# convert the Diabetes diagnosis to a Yes / No
+subsample <- subsample %>%
+      mutate(Diabetes_binary = ifelse(Diabetes_binary == 1,"Yes","No"))
+
+```
+
+A training and test set are created and the values checked to make sure it has all worked.
+The data (except for the dependent variable) will be scaled at this point. 
+
+__Code__: _R_
+```{r}
+
+knn_data1 <- knn_data %>%
+      mutate(Diabetes_binary = ifelse(Diabetes_binary == 1,"Yes","No"))
+
+#Use 70% of data set as training set and remaining 30% as testing set
+sample <- sample(c(TRUE, FALSE), nrow(subsample), replace=TRUE, prob=c(0.8,0.2))
+train_samp <- subsample[sample, ]
+test_samp <- knn_data1[!sample, ]
+
+# Scale the new numerical values
+train_samp[-1] = scale(train_samp[-1])
+test_samp[-1] = scale(test_samp[-1])
+
+# show the data types
+str(train_samp)
+
+```
+Next step is to create and train the model.
+
+__Code__: _R_
+```{r}
+
+# Setting up train controls
+repeats = 3
+numbers = 10
+tunel = 10
+
+# set seed
+set.seed(1)
+
+# model parameters
+x <- trainControl(method = "repeatedcv",
+                 number = numbers,
+                 repeats = repeats,
+                 classProbs = TRUE,
+                 summaryFunction = twoClassSummary)
+
+# Run the kNN 
+model1 <- train(Diabetes_binary~. , data = train_samp, method = "knn",
+               preProcess = c("center","scale"),
+               trControl = x,
+               metric = "ROC",
+               tuneLength = tunel)
+
+# Summary of model
+model1
+
+# plot the output
+plot(model1)
+
+```
+
+make predictions against the test set
+
+__Code__: _R_
+```{r}
+# make predictions on the test set 
+valid_pred <- predict(model1,test_samp, type = "prob")
+
+
+```
+
+
+__Code__: _R_
+```{r}
+# get the prediction values and the test set values
+pred_val <- prediction(valid_pred[,2],test_samp$Diabetes_binary)
+
+# Calculating Area under Curve (AUC)
+perf_val <- performance(pred_val,"auc")
+perf_val
+
+# Plot AUC
+perf_val <- performance(pred_val, "tpr", "fpr")
+plot(perf_val, col = "green", lwd = 1.5)
+
+```
+
+ROC graph shows an approx 0.8 AU-ROC it can be checked by the same process as prev models with a more accurate graph and read out
+
+__Code__: _R_
+```{r}
+# get predictions again but output only the probabilities to list
+valid_pred1 <- predict(model1,test_samp, type = "prob")[,2]
+
+# make a copy of the test set
+test1 <- test_samp
+
+# change the diabetic vairable back to a 1 or 0
+test1 <- test1 %>%
+      mutate(Diabetes_binary = ifelse(Diabetes_binary == "Yes",1,0))
+
+#find optimal cutoff probability to use to maximize accuracy
+optimal <- optimalCutoff(test1$Diabetes_binary, valid_pred)[1]
+optimal
+
+```
+__Code__: _R_
+```{r}
+#calculate sensitivity
+s <- InformationValue::sensitivity(test1$Diabetes_binary,valid_pred1)
+
+#calculate specificity
+sp <- InformationValue::specificity(test1$Diabetes_binary,valid_pred1)
+
+#calculate total misclassification error rate
+me <- InformationValue::misClassError(test1$Diabetes_binary,valid_pred1, threshold=0.5)
+
+sprintf("The sensitivity of the model: %f", s)
+sprintf("The specificity of the model: %f", sp)
+sprintf("The total misclassification error rate of the model: %f", me)
+
+```
+__Code__: _R_
+```{r}
+# plot the ROC Curve of the model
+plotROC(test1$Diabetes_binary,valid_pred1)
+```
+
+The AU-ROC for the KNN model gives a value of 0.8129
+
+__Code__: _R_
+```{r}
+# output auc with Proc package
+auc(test1$Diabetes_binary,valid_pred1)
+
+```
+The KNN model produced an AU ROC of 0.8129 or 81.29%, so far the first logistic regression model has performed the best. Then the random forest model slightly worse and then the KNN
+
+## Naive Bayes
+
+Naive Bayes model will be used as the fourth and final model to test for predicting diabetes using the health indicators from the data set. The cleaned data set will be used with the original factor string answers. although a subset of the original data set will be sampled for processing reasons.
+
+__Code__: _R_
+```{r warning=FALSE}
+
+# make a copy of the dataset
+samp_data1 <- data.clean
+
+# set the sample size we want
+sample_size = 5000 # 
+
+# set seed for reporducabilty
+set.seed(1)
+
+# parameters for the sample set
+idxs = sample(1:nrow(samp_data1),sample_size,replace=F)
+
+# create the sample set
+subsample1 = samp_data1[idxs,]
+# list for p-values
+pvalues = list()
+
+# loop through the dataset columns and test each column
+# an alpha 0.05 is used and the p-value is used to select the 
+# the corresponding distribution in the sample set
+for (col in names(samp_data1)) {
+  if (class(samp_data1[,col]) %in% c("numeric","integer")) {
+    # Numeric variable. Using Kolmogorov-Smirnov test
+    pvalues[[col]] = ks.test(samp_data1[[col]],samp_data1[[col]])$p.value
+    
+  } else {
+    # Categorical variable. Using Pearson's Chi-square test
+    probs = table(samp_data1[[col]])/nrow(samp_data1)
+    pvalues[[col]] = chisq.test(table(subsample1[[col]]),p=probs)$p.value
+    
+  }
+}
+
+# convert the Diabetes diagnosis to a Yes / No
+subsample1 <- subsample1 %>%
+      mutate(Diabetes_binary = ifelse(Diabetes_binary == 1,"Yes","No"))
+
+subsample1$Diabetes_binary <- as.factor(subsample1$Diabetes_binary)
+
+```
+
+A training and test set are created and the values checked to make sure it has all worked.
+The data (except for the dependent variable) will be scaled at this point. 
+
+__Code__: _R_
+```{r}
+
+
+#Use 70% of data set as training set and remaining 30% as testing set
+sample1 <- sample(c(TRUE, FALSE), nrow(subsample1), replace=TRUE, prob=c(0.8,0.2))
+train_samp1 <- subsample1[sample1, ]
+test_samp1 <- subsample1[!sample1, ]
+
+
+# show the data types
+str(train_samp1)
+
+```
+A quick summary of the test set can be checked to make sure all factors are accounted for in the sample
+
+__Code__: _R_
+```{r}
+
+summary(test_samp1)
+```
+
+An X and Y variable are created, splitting the data set by the dependent and other independant variables.
+
+__Code__: _R_
+```{r}
+features <- setdiff(names(train_samp1), "Diabetes_binary")
+x <- train_samp1[, features] # Set X as list of features
+y <- train_samp1$Diabetes_binary # Set Y as Attrition
+
+```
+
+Training parameters for the model are set in the below chunks
+
+__Code__: _R_
+```{r}
+train_control <- trainControl(
+method = "cv",
+number = 10
+)
+
+search_grid <- expand.grid(
+usekernel = c(TRUE, FALSE),
+fL = 0:5,
+adjust = seq(0, 5, by = 1)
+)
+
+```
+
+
+The Naive Bayes model is trained.
+
+__Code__: _R_
+```{r warning=FALSE}
+
+model.nb <- train(
+x = x,
+y = y,
+method = "nb",
+trControl = train_control,
+tuneGrid = search_grid,
+preProc = c("BoxCox", "center", "scale", "pca")
+)
+```
+
+The top 5 models for accuracy are selected and plotted.
+
+__Code__: _R_
+```{r}
+model.nb$results %>%
+top_n(5, wt = Accuracy) %>%
+arrange(desc(Accuracy))
+# plot search grid results
+plot(model.nb)
+
+```
+
+A confusion matrix of the best model is shown
+
+__Code__: _R_
+```{r}
+
+# results for best model
+confusionMatrix(model.nb)
+```
+Predictions are now made on the test data set created during the sampling.
+
+__Code__: _R_
+```{r warning=FALSE}
+pred.nb <- predict(model.nb, newdata = test_samp1)
+confusionMatrix(pred.nb, test_samp1$Diabetes_binary)
+
+```
+A balanced accuracy score of 72.27% is achieved by the model.
+The model can be tested again as per the other models giving a probability output.
+
+__Code__: _R_
+```{r warning=FALSE}
+# get predictions again but output only the probabilities to list
+valid_pred2 <- predict(model.nb, newdata = test_samp1, type = "prob")[,2]
+
+# make a copy of the test set
+test1 <- test_samp
+
+# change the diabetic vairable back to a 1 or 0
+test_samp1.1 <- test_samp1 %>%
+      mutate(Diabetes_binary = ifelse(Diabetes_binary == "Yes",1,0))
+
+#find optimal cutoff probability to use to maximize accuracy
+optimal <- optimalCutoff(test_samp1.1$Diabetes_binary, valid_pred2)[1]
+optimal
+
+```
+
+__Code__: _R_
+```{r}
+#calculate sensitivity
+s <- InformationValue::sensitivity(test_samp1.1$Diabetes_binary,valid_pred2)
+
+#calculate specificity
+sp <- InformationValue::specificity(test_samp1.1$Diabetes_binary,valid_pred2)
+
+#calculate total misclassification error rate
+me <- InformationValue::misClassError(test_samp1.1$Diabetes_binary,valid_pred2, threshold=optimal)
+
+sprintf("The sensitivity of the model: %f", s)
+sprintf("The specificity of the model: %f", sp)
+sprintf("The total misclassification error rate of the model: %f", me)
+
+```
+__Code__: _R_
+```{r}
+# plot the ROC Curve of the model
+plotROC(test_samp1.1$Diabetes_binary,valid_pred2)
+
+
+```
+ 
+The Naive Bayes model performed the worst of all four models when measuring by the AU-ROC measure with a value of 0.7852 or 78.52%
+
